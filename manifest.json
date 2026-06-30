@@ -1,0 +1,11 @@
+{
+  "id": "obsidian-google-sync",
+  "name": "Obsidian Google Sync",
+  "version": "0.1.0",
+  "minAppVersion": "1.5.0",
+  "description": "Two-way auto/manual sync for an Obsidian vault using Google Drive.",
+  "author": "Haniewicz",
+  "authorUrl": "",
+  "fundingUrl": "",
+  "isDesktopOnly": false
+}
