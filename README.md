@@ -1,6 +1,6 @@
-# Obsidian Google Sync
+# Google Drive Vault Sync
 
-Obsidian Google Sync is a community plugin that syncs an Obsidian vault two-way with Google Drive using the Google OAuth 2.0 Device Authorization Flow.
+Google Drive Vault Sync is a community plugin that syncs an Obsidian vault two-way with Google Drive using the Google OAuth 2.0 Device Authorization Flow.
 
 ## Important notice
 
@@ -33,7 +33,7 @@ The author is not responsible for any data loss, file corruption, missed synchro
 2. Create this folder in your vault:
 
 ```text
-.obsidian/plugins/obsidian-google-sync/
+.obsidian/plugins/google-drive-vault-sync/
 ```
 
 3. Put the release assets in that folder.

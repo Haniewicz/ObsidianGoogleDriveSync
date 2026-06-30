@@ -192,20 +192,20 @@ export class GoogleAuth {
 
   private requireClientId(): string {
     const clientId = this.getClientId().trim();
-    if (!clientId) throw new Error("Add a Google OAuth client ID in Obsidian Google Sync settings first.");
+    if (!clientId) throw new Error("Add a Google OAuth client ID in Google Drive Vault Sync settings first.");
     return clientId;
   }
 
   private requireClientSecret(): string {
     const clientSecret = this.getClientSecret().trim();
-    if (!clientSecret) throw new Error("Add a Google OAuth client secret in Obsidian Google Sync settings first.");
+    if (!clientSecret) throw new Error("Add a Google OAuth client secret in Google Drive Vault Sync settings first.");
     return clientSecret;
   }
 
   private formatTokenError(body: TokenResponse, status: number): string {
     const message = body.error_description || body.error || `Google token request failed (${status}).`;
     if (message.toLowerCase().includes("client secret")) {
-      return "This OAuth client requires a client secret. Copy the client secret from Google Cloud Console and paste it in Obsidian Google Sync settings.";
+      return "This OAuth client requires a client secret. Copy the client secret from Google Cloud Console and paste it in Google Drive Vault Sync settings.";
     }
     return message;
   }

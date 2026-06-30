@@ -10,7 +10,7 @@ export class GoogleDriveSyncSettingTab extends PluginSettingTab {
     const { containerEl } = this;
     this.plugin.onConnectionChange = () => this.display();
     containerEl.empty();
-    containerEl.createEl("h2", { text: "Obsidian Google Sync" });
+    containerEl.createEl("h2", { text: "Google Drive Vault Sync" });
 
     const connected = this.plugin.getStoredAuth() !== undefined;
     this.renderStatus(containerEl, connected);

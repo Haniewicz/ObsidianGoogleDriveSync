@@ -154,7 +154,7 @@ export const DEFAULT_SETTINGS: GoogleDriveSyncSettings = {
   requestConcurrency: 2,
   maxDeletionPercent: 20,
   ignoredPaths: [
-    ".obsidian/plugins/obsidian-google-sync/",
+    ".obsidian/plugins/google-drive-vault-sync/",
     ".obsidian/workspace.json",
     ".obsidian/workspace-mobile.json",
     ".obsidian/cache/",
