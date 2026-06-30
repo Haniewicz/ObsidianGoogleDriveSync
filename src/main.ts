@@ -1,4 +1,4 @@
-import { Notice, Plugin, TAbstractFile } from "obsidian";
+import { Notice, Platform, Plugin, TAbstractFile } from "obsidian";
 import { GoogleAuth } from "./auth";
 import { GoogleDriveClient } from "./drive";
 import { DeviceFlowModal, chooseLocalFilesToKeep, confirmDangerAction, confirmResetIndex } from "./modals";
@@ -6,7 +6,7 @@ import { RequestQueue } from "./queue";
 import { LocalVaultScanner } from "./scanner";
 import { GoogleDriveSyncSettingTab } from "./settings";
 import { SyncEngine } from "./sync";
-import { DEFAULT_SETTINGS, GoogleDriveSyncSettings, PluginData, RemoteSnapshotMeta, StoredAuth, StoredPluginData, SyncIndexEntry, SyncStatus, SyncSummary } from "./types";
+import { DEFAULT_SETTINGS, GoogleDriveSyncSettings, PluginData, RemoteSnapshotMeta, StoredAuth, StoredPluginData, SyncStatus, SyncSummary, defaultIgnoredPaths } from "./types";
 import { createLogger } from "./utils";
 
 export default class GoogleDriveSyncPlugin extends Plugin {
@@ -76,7 +76,13 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 
   async loadSettings() {
     const loaded = await this.loadData() as StoredPluginData | null;
-    this.settings = { ...DEFAULT_SETTINGS, ...(loaded?.settings ?? {}) };
+    const settings = {
+      ...DEFAULT_SETTINGS,
+      ignoredPaths: defaultIgnoredPaths(this.app.vault.configDir),
+      ...(loaded?.settings ?? {})
+    };
+    if (!loaded?.settings?.ignoredPaths) settings.ignoredPaths = defaultIgnoredPaths(this.app.vault.configDir);
+    this.settings = settings;
   }
 
   async saveSettings() {
@@ -98,7 +104,8 @@ export default class GoogleDriveSyncPlugin extends Plugin {
   }
 
   async savePluginData(data: Partial<StoredPluginData>) {
-    const { settings: _settings, ...pluginData } = data;
+    const pluginData = { ...data };
+    delete pluginData.settings;
     this.pluginData = {
       ...this.pluginData,
       ...pluginData
@@ -295,7 +302,7 @@ export default class GoogleDriveSyncPlugin extends Plugin {
       name: "Reset local sync index",
       callback: async () => {
         if (await confirmResetIndex(this.app)) {
-          await this.savePluginData({ index: {} as Record<string, SyncIndexEntry> });
+          await this.savePluginData({ index: {} });
           new Notice("Local sync index reset.");
         }
       }
@@ -346,7 +353,7 @@ export default class GoogleDriveSyncPlugin extends Plugin {
   private ensureDeviceIdentity() {
     const deviceId = this.getDeviceId();
     if (!this.settings.deviceName.trim()) {
-      const platform = /iphone|ipad|android/i.test(navigator.userAgent) ? "Mobile" : "Desktop";
+      const platform = Platform.isMobile ? "Mobile" : "Desktop";
       this.settings.deviceName = `${platform} ${deviceId.slice(0, 6)}`;
       void this.saveSettings();
     }

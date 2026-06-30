@@ -138,6 +138,17 @@ export type PlannedDeletion = {
   direction: "local" | "remote";
 };
 
+export function defaultIgnoredPaths(configDir: string): string {
+  const normalizedConfigDir = configDir.replace(/\/+$/, "");
+  return [
+    `${normalizedConfigDir}/plugins/google-drive-vault-sync/`,
+    `${normalizedConfigDir}/workspace.json`,
+    `${normalizedConfigDir}/workspace-mobile.json`,
+    `${normalizedConfigDir}/cache/`,
+    ".trash/"
+  ].join("\n");
+}
+
 export const DEFAULT_SETTINGS: GoogleDriveSyncSettings = {
   clientId: "",
   clientSecret: "",
@@ -153,12 +164,6 @@ export const DEFAULT_SETTINGS: GoogleDriveSyncSettings = {
   syncDebounceSeconds: 2,
   requestConcurrency: 2,
   maxDeletionPercent: 20,
-  ignoredPaths: [
-    ".obsidian/plugins/google-drive-vault-sync/",
-    ".obsidian/workspace.json",
-    ".obsidian/workspace-mobile.json",
-    ".obsidian/cache/",
-    ".trash/"
-  ].join("\n"),
+  ignoredPaths: "",
   debugMode: false
 };

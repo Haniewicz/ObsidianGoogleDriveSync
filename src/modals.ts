@@ -120,7 +120,7 @@ export function confirmResetIndex(app: App): Promise<boolean> {
     modal.titleEl.setText("Reset local sync index?");
     modal.contentEl.createEl("p", { text: "This keeps files and Google Drive data, but forgets the local sync baseline." });
     new Setting(modal.contentEl)
-      .addButton((button) => button.setButtonText("Reset").setWarning().onClick(() => {
+      .addButton((button) => button.setButtonText("Reset").setDestructive().onClick(() => {
         finish(true);
       }))
       .addButton((button) => button.setButtonText("Cancel").onClick(() => {
@@ -147,7 +147,7 @@ export function confirmDangerAction(app: App, title: string, message: string, ct
     modal.titleEl.setText(title);
     modal.contentEl.createEl("p", { text: message });
     new Setting(modal.contentEl)
-      .addButton((button) => button.setButtonText(cta).setWarning().onClick(() => finish(true)))
+      .addButton((button) => button.setButtonText(cta).setDestructive().onClick(() => finish(true)))
       .addButton((button) => button.setButtonText("Cancel").onClick(() => finish(false)));
     modal.onClose = () => {
       finish(false, false);
@@ -188,7 +188,7 @@ export function chooseLocalFilesToKeep(app: App, paths: string[]): Promise<strin
     render();
     new Setting(modal.contentEl)
       .addButton((button) => button.setButtonText("Keep selected").setCta().onClick(() => finish(Array.from(selected))))
-      .addButton((button) => button.setButtonText("Move all to trash").setWarning().onClick(() => finish([])))
+      .addButton((button) => button.setButtonText("Move all to trash").setDestructive().onClick(() => finish([])))
       .addButton((button) => button.setButtonText("Cancel").onClick(() => finish(null)));
     modal.onClose = () => {
       finish(null, false);

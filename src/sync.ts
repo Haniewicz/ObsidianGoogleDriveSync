@@ -336,11 +336,11 @@ export class SyncEngine {
     const file = this.options.app.vault.getAbstractFileByPath(path);
     if (file instanceof TFile) {
       try {
-        await this.options.app.vault.trash(file, false);
+        await this.options.app.fileManager.trashFile(file);
       } catch {
         const content = isLikelyText(path) ? await this.options.app.vault.read(file) : await this.options.app.vault.readBinary(file);
         await writeVaultFile(this.options.app.vault, deletedCopyPath(path), content);
-        await this.options.app.vault.delete(file);
+        await this.options.app.fileManager.trashFile(file);
       }
     }
     index[path] = { ...(index[path] ?? this.emptyEntry(path)), deleted: true, lastSyncedAt: Date.now() };

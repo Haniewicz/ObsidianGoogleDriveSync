@@ -10,7 +10,7 @@ export class GoogleDriveSyncSettingTab extends PluginSettingTab {
     const { containerEl } = this;
     this.plugin.onConnectionChange = () => this.display();
     containerEl.empty();
-    containerEl.createEl("h2", { text: "Google Drive Vault Sync" });
+    new Setting(containerEl).setName("Google Drive Vault Sync").setHeading();
 
     const connected = this.plugin.getStoredAuth() !== undefined;
     this.renderStatus(containerEl, connected);
@@ -87,7 +87,7 @@ export class GoogleDriveSyncSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("Disconnect")
       .setDesc("Deletes stored Google auth data from plugin storage.")
-      .addButton((button) => button.setButtonText("Disconnect").setWarning().setDisabled(!connected).onClick(async () => {
+      .addButton((button) => button.setButtonText("Disconnect").setDestructive().setDisabled(!connected).onClick(async () => {
         await this.plugin.disconnectGoogleDrive();
         this.display();
       }));
@@ -213,7 +213,7 @@ export class GoogleDriveSyncSettingTab extends PluginSettingTab {
   private renderStatus(containerEl: HTMLElement, connected: boolean) {
     const status = this.plugin.pluginData.syncStatus;
     const summary = status?.lastSummary;
-    containerEl.createEl("h3", { text: "Sync status" });
+    new Setting(containerEl).setName("Sync status").setHeading();
     const rows = [
       `State: ${status?.state ?? (connected ? "idle" : "disconnected")}`,
       `Device: ${this.plugin.settings.deviceName || "Unnamed"}`,
@@ -237,7 +237,7 @@ export class GoogleDriveSyncSettingTab extends PluginSettingTab {
   }
 
   private renderSnapshots(containerEl: HTMLElement, connected: boolean) {
-    containerEl.createEl("h3", { text: "Snapshots" });
+    new Setting(containerEl).setName("Snapshots").setHeading();
     const listEl = containerEl.createDiv("obsidian-google-sync-snapshot-list");
     listEl.setText(connected ? "Loading snapshots..." : "Connect Google Drive to load snapshots.");
     if (!connected) return;
@@ -258,11 +258,11 @@ export class GoogleDriveSyncSettingTab extends PluginSettingTab {
   }
 
   private renderDangerZone(containerEl: HTMLElement, connected: boolean) {
-    containerEl.createEl("h3", { text: "Danger zone" });
+    new Setting(containerEl).setName("Danger zone").setHeading();
     new Setting(containerEl)
       .setName("Reset cloud from this vault")
       .setDesc("Move existing synced Drive files to trash, upload this vault, and command other devices to replace local data from cloud.")
-      .addButton((button) => button.setButtonText("Reset cloud").setWarning().setDisabled(!connected).onClick(async () => {
+      .addButton((button) => button.setButtonText("Reset cloud").setDestructive().setDisabled(!connected).onClick(async () => {
         try {
           await this.plugin.confirmAndResetCloudFromLocal();
           this.display();
@@ -273,7 +273,7 @@ export class GoogleDriveSyncSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("Reset this vault from cloud")
       .setDesc("Overwrite this vault from Google Drive, with a per-file choice for local-only files.")
-      .addButton((button) => button.setButtonText("Reset local").setWarning().setDisabled(!connected).onClick(async () => {
+      .addButton((button) => button.setButtonText("Reset local").setDestructive().setDisabled(!connected).onClick(async () => {
         try {
           await this.plugin.confirmAndResetLocalFromCloud();
           this.display();
