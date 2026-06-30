@@ -1,0 +1,34 @@
+.google-drive-sync-user-code {
+  font-size: 2rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  margin: 1rem 0;
+  user-select: all;
+}
+
+.google-drive-sync-deletion-list {
+  max-height: 45vh;
+  overflow: auto;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  padding: 0.5rem;
+  margin: 0.75rem 0;
+}
+
+.obsidian-google-sync-status-row {
+  margin: 0.25rem 0;
+  color: var(--text-muted);
+}
+
+.obsidian-google-sync-snapshot-list {
+  max-height: 14rem;
+  overflow: auto;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  padding: 0.5rem;
+  margin: 0.5rem 0 1rem;
+}
+
+.obsidian-google-sync-snapshot-list p {
+  margin: 0.25rem 0;
+}
