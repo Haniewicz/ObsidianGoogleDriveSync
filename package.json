@@ -1,7 +1,7 @@
 {
   "name": "google-drive-vault-sync",
-  "version": "0.1.1",
-  "description": "Two-way Google Drive sync for Obsidian vaults.",
+  "version": "0.1.2",
+  "description": "Two-way Google Drive sync for vaults.",
   "main": "main.js",
   "scripts": {
     "dev": "node esbuild.config.mjs",
