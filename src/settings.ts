@@ -10,7 +10,6 @@ export class GoogleDriveSyncSettingTab extends PluginSettingTab {
     const { containerEl } = this;
     this.plugin.onConnectionChange = () => this.display();
     containerEl.empty();
-    new Setting(containerEl).setName("Google Drive Vault Sync").setHeading();
 
     const connected = this.plugin.getStoredAuth() !== undefined;
     this.renderStatus(containerEl, connected);
