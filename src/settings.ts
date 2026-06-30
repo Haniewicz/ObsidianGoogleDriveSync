@@ -86,7 +86,7 @@ export class GoogleDriveSyncSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("Disconnect")
       .setDesc("Deletes stored Google auth data from plugin storage.")
-      .addButton((button) => button.setButtonText("Disconnect").setDestructive().setDisabled(!connected).onClick(async () => {
+      .addButton((button) => button.setButtonText("Disconnect").setWarning().setDisabled(!connected).onClick(async () => {
         await this.plugin.disconnectGoogleDrive();
         this.display();
       }));
@@ -261,7 +261,7 @@ export class GoogleDriveSyncSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("Reset cloud from this vault")
       .setDesc("Move existing synced Drive files to trash, upload this vault, and command other devices to replace local data from cloud.")
-      .addButton((button) => button.setButtonText("Reset cloud").setDestructive().setDisabled(!connected).onClick(async () => {
+      .addButton((button) => button.setButtonText("Reset cloud").setWarning().setDisabled(!connected).onClick(async () => {
         try {
           await this.plugin.confirmAndResetCloudFromLocal();
           this.display();
@@ -272,7 +272,7 @@ export class GoogleDriveSyncSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("Reset this vault from cloud")
       .setDesc("Overwrite this vault from Google Drive, with a per-file choice for local-only files.")
-      .addButton((button) => button.setButtonText("Reset local").setDestructive().setDisabled(!connected).onClick(async () => {
+      .addButton((button) => button.setButtonText("Reset local").setWarning().setDisabled(!connected).onClick(async () => {
         try {
           await this.plugin.confirmAndResetLocalFromCloud();
           this.display();

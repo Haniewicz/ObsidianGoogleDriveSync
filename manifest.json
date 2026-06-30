@@ -1,8 +1,8 @@
 {
   "id": "google-drive-vault-sync",
   "name": "Google Drive Vault Sync",
-  "version": "0.1.4",
-  "minAppVersion": "1.13.0",
+  "version": "0.1.5",
+  "minAppVersion": "1.8.0",
   "description": "Two-way auto/manual vault sync using Google Drive.",
   "author": "Haniewicz",
   "authorUrl": "",
