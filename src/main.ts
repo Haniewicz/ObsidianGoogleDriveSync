@@ -59,6 +59,8 @@ export default class GoogleDriveSyncPlugin extends Plugin {
       getAppliedCommandIds: () => this.pluginData.appliedCommandIds ?? [],
       setAppliedCommandIds: async (appliedCommandIds) => this.savePluginData({ appliedCommandIds }),
       getBackupEnabled: () => this.settings.backupEnabled,
+      getBackupMode: () => this.settings.backupMode,
+      getBackupIntervalMinutes: () => this.settings.backupIntervalMinutes,
       getMaxBackups: () => this.settings.maxBackups
     });
 

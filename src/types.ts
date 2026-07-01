@@ -18,6 +18,8 @@ export type GoogleDriveSyncSettings = {
   ignoredPaths: string;
   debugMode: boolean;
   backupEnabled: boolean;
+  backupMode: BackupMode;
+  backupIntervalMinutes: number;
   maxBackups: number;
 };
 
@@ -31,6 +33,7 @@ export type StoredAuth = {
 
 export type ConflictPolicy = "keep-both" | "prefer-local" | "prefer-remote";
 export type InitialSyncDirection = "cloud-to-local" | "local-to-cloud";
+export type BackupMode = "safety-only" | "timed" | "every-sync";
 
 export type SyncStatusState = "disconnected" | "idle" | "syncing" | "error";
 
@@ -208,5 +211,7 @@ export const DEFAULT_SETTINGS: GoogleDriveSyncSettings = {
   ignoredPaths: "",
   debugMode: false,
   backupEnabled: true,
+  backupMode: "timed",
+  backupIntervalMinutes: 30,
   maxBackups: 10
 };

@@ -331,10 +331,31 @@ export class GoogleDriveSyncSettingTab extends PluginSettingTab {
     new Setting(containerEl).setName("Backups").setHeading();
 
     new Setting(containerEl)
-      .setName("Auto-backup on sync")
-      .setDesc("Create a backup on Google Drive after each sync that made changes.")
+      .setName("Backups enabled")
+      .setDesc("Create Google Drive backups before sync actions that can overwrite or remove files.")
       .addToggle((toggle) => toggle.setValue(this.plugin.settings.backupEnabled).onChange(async (value) => {
         this.plugin.settings.backupEnabled = value;
+        await this.plugin.saveSettings();
+      }));
+
+    new Setting(containerEl)
+      .setName("Backup mode")
+      .setDesc("Safety only backs up risky changes. Timed also backs up routine local edits at most once per interval. Every sync keeps the most history.")
+      .addDropdown((dropdown) => dropdown
+        .addOption("safety-only", "Safety only")
+        .addOption("timed", "Timed")
+        .addOption("every-sync", "Every sync")
+        .setValue(this.plugin.settings.backupMode)
+        .onChange(async (value) => {
+          this.plugin.settings.backupMode = value as typeof this.plugin.settings.backupMode;
+          await this.plugin.saveSettings();
+        }));
+
+    new Setting(containerEl)
+      .setName("Routine backup interval")
+      .setDesc("Minimum minutes between routine backups when Backup mode is Timed. Safety backups ignore this interval.")
+      .addText((text) => text.setValue(String(this.plugin.settings.backupIntervalMinutes)).onChange(async (value) => {
+        this.plugin.settings.backupIntervalMinutes = Math.max(1, parseInt(value, 10) || 30);
         await this.plugin.saveSettings();
       }));
 
