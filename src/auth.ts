@@ -1,4 +1,5 @@
-import { Notice, Platform, Plugin, requestUrl } from "obsidian";
+import { Notice, Plugin, RequestUrlParam, RequestUrlResponse } from "obsidian";
+import { formatRequestError, isDnsResolutionError, requestGoogleUrl } from "./googleRequest";
 import { DRIVE_SCOPE, PluginData, StoredAuth } from "./types";
 import { sleep } from "./utils";
 
@@ -42,6 +43,8 @@ export type NetworkDiagnosticResult = {
   method: string;
   ok: boolean;
   reachable: boolean;
+  expectedErrorResponse?: boolean;
+  note?: string;
   status?: number;
   statusText?: string;
   responseError?: string;
@@ -54,7 +57,9 @@ export type NetworkDiagnosticResult = {
 type NetworkDiagnosticTest = {
   name: string;
   host: string;
-  request: Extract<Parameters<typeof requestUrl>[0], { url: string }>;
+  request: RequestUrlParam;
+  expectedError?: string;
+  note?: string;
 };
 
 export async function runGoogleNetworkDiagnostics(clientId: string, clientSecret: string): Promise<NetworkDiagnosticResult[]> {
@@ -84,7 +89,9 @@ export async function runGoogleNetworkDiagnostics(clientId: string, clientSecret
           grant_type: "refresh_token"
         }).toString(),
         throw: false
-      }
+      },
+      expectedError: "invalid_grant",
+      note: "Expected for this diagnostic request because it uses a fake refresh token. It proves the device reached Google's token endpoint."
     },
     {
       name: "Drive API endpoint",
@@ -110,9 +117,10 @@ export async function runGoogleNetworkDiagnostics(clientId: string, clientSecret
   for (const test of tests) {
     const startedAt = Date.now();
     try {
-      const response = await requestUrl(test.request);
+      const response = await requestGoogleUrl(test.request);
       const body = readDiagnosticBody(response);
       const parsed = parseDiagnosticBody(body);
+      const expectedErrorResponse = test.expectedError !== undefined && parsed.error === test.expectedError;
       results.push({
         name: test.name,
         host: test.host,
@@ -120,6 +128,8 @@ export async function runGoogleNetworkDiagnostics(clientId: string, clientSecret
         method: test.request.method ?? "GET",
         ok: response.status >= 200 && response.status < 300,
         reachable: true,
+        expectedErrorResponse,
+        note: expectedErrorResponse ? test.note : undefined,
         status: response.status,
         statusText: response.status >= 200 && response.status < 300 ? "HTTP success" : "HTTP error response",
         responseError: parsed.error,
@@ -136,7 +146,7 @@ export async function runGoogleNetworkDiagnostics(clientId: string, clientSecret
         ok: false,
         reachable: false,
         durationMs: Date.now() - startedAt,
-        error: formatDiagnosticError(error)
+        error: formatRequestError(error)
       });
     }
   }
@@ -320,28 +330,24 @@ export class GoogleAuth {
     return message;
   }
 
-  private async requestGoogle(options: Parameters<typeof requestUrl>[0], host: string): Promise<Awaited<ReturnType<typeof requestUrl>>> {
+  private async requestGoogle(options: RequestUrlParam, host: string): Promise<RequestUrlResponse> {
     try {
-      return await requestUrl(options);
+      return await requestGoogleUrl(options);
     } catch (error) {
       throw this.formatNetworkError(error, host);
     }
   }
 
   private formatNetworkError(error: unknown, host: string): Error {
-    const message = formatDiagnosticError(error);
-    if (Platform.isMobile && /UnknownHostException|Unable to resolve host|ERR_NAME_NOT_RESOLVED/i.test(message)) {
+    const message = formatRequestError(error);
+    if (isDnsResolutionError(error)) {
       return new Error(`Could not resolve ${host}. Check the mobile device internet connection, Private DNS/VPN settings, and whether Obsidian has network access, then try connecting Google Drive again.`);
     }
     return error instanceof Error ? error : new Error(message);
   }
 }
 
-function formatDiagnosticError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function readDiagnosticBody(response: Awaited<ReturnType<typeof requestUrl>>): string {
+function readDiagnosticBody(response: RequestUrlResponse): string {
   if (typeof response.text === "string") return response.text;
   try {
     if (response.json !== undefined) return JSON.stringify(response.json);

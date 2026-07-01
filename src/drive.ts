@@ -1,5 +1,5 @@
-import { requestUrl } from "obsidian";
 import { GoogleAuth } from "./auth";
+import { requestGoogleUrl } from "./googleRequest";
 import { RemoteManifest, RemoteSnapshotMeta, RemoteState } from "./types";
 import { RequestQueue } from "./queue";
 import { encodeQuery } from "./utils";
@@ -103,7 +103,7 @@ export class GoogleDriveClient {
   async downloadFile(fileId: string): Promise<ArrayBuffer> {
     const token = await this.auth.getValidAccessToken();
     return this.queue.run(async () => {
-      const response = await requestUrl({
+      const response = await requestGoogleUrl({
         url: `${DRIVE_API}/files/${encodeURIComponent(fileId)}?alt=media`,
         method: "GET",
         headers: { Authorization: `Bearer ${token}` }
@@ -162,7 +162,7 @@ export class GoogleDriveClient {
   private async requestJson<T>(url: string, method: string, body?: unknown): Promise<T> {
     const token = await this.auth.getValidAccessToken();
     return this.queue.run(async () => {
-      const response = await requestUrl({
+      const response = await requestGoogleUrl({
         url,
         method,
         headers: {
@@ -179,7 +179,7 @@ export class GoogleDriveClient {
   private async createFile(name: string, parentId: string, content: string | ArrayBuffer, mimeType: string): Promise<DriveFile> {
     const token = await this.auth.getValidAccessToken();
     return this.queue.run(async () => {
-      const response = await requestUrl({
+      const response = await requestGoogleUrl({
         url: `${UPLOAD_API}/files?uploadType=multipart&fields=id,name,modifiedTime,size,headRevisionId`,
         method: "POST",
         headers: {
@@ -196,7 +196,7 @@ export class GoogleDriveClient {
   private async updateContent(fileId: string, content: string | ArrayBuffer, mimeType: string): Promise<DriveFile> {
     const token = await this.auth.getValidAccessToken();
     return this.queue.run(async () => {
-      const response = await requestUrl({
+      const response = await requestGoogleUrl({
         url: `${UPLOAD_API}/files/${encodeURIComponent(fileId)}?uploadType=media&fields=id,name,modifiedTime,size,headRevisionId`,
         method: "PATCH",
         headers: {

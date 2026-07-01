@@ -291,8 +291,13 @@ export class GoogleDriveSyncSettingTab extends PluginSettingTab {
             itemEl.createEl("strong", { text: result.name });
             itemEl.createEl("p", { text: `${result.method} ${result.url}` });
             if (result.reachable) {
-              const status = result.ok ? "success" : "reachable with Google error response";
+              const status = result.ok
+                ? "success"
+                : result.expectedErrorResponse
+                  ? "reachable with expected diagnostic response"
+                  : "reachable with Google error response";
               itemEl.createEl("p", { text: `Result: ${status}; HTTP ${result.status}; ${result.durationMs}ms` });
+              if (result.note) itemEl.createEl("p", { text: result.note });
               if (result.responseError) itemEl.createEl("p", { text: `Google error: ${result.responseError}` });
               if (result.responseDescription) itemEl.createEl("p", { text: `Description: ${result.responseDescription}` });
               if (result.responsePreview) itemEl.createEl("pre", { text: result.responsePreview });
