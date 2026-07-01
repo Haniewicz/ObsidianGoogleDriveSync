@@ -287,11 +287,22 @@ export class GoogleDriveSyncSettingTab extends PluginSettingTab {
           const results = await runGoogleNetworkDiagnostics(this.plugin.settings.clientId, this.plugin.settings.clientSecret);
           resultEl.empty();
           for (const result of results) {
-            const status = result.ok ? `OK, HTTP ${result.status}` : `Failed: ${result.error ?? "Unknown error"}`;
-            resultEl.createEl("p", { text: `${result.name} (${result.host}): ${status}` });
+            const itemEl = resultEl.createDiv("obsidian-google-sync-diagnostic-item");
+            itemEl.createEl("strong", { text: result.name });
+            itemEl.createEl("p", { text: `${result.method} ${result.url}` });
+            if (result.reachable) {
+              const status = result.ok ? "success" : "reachable with Google error response";
+              itemEl.createEl("p", { text: `Result: ${status}; HTTP ${result.status}; ${result.durationMs}ms` });
+              if (result.responseError) itemEl.createEl("p", { text: `Google error: ${result.responseError}` });
+              if (result.responseDescription) itemEl.createEl("p", { text: `Description: ${result.responseDescription}` });
+              if (result.responsePreview) itemEl.createEl("pre", { text: result.responsePreview });
+            } else {
+              itemEl.createEl("p", { text: `Result: network error; ${result.durationMs}ms` });
+              itemEl.createEl("p", { text: result.error ?? "Unknown error" });
+            }
           }
-          const failed = results.filter((result) => !result.ok).length;
-          new Notice(failed === 0 ? "Google network diagnostics passed." : `Google network diagnostics found ${failed} issue${failed === 1 ? "" : "s"}.`);
+          const networkFailures = results.filter((result) => !result.reachable).length;
+          new Notice(networkFailures === 0 ? "Google endpoints are reachable." : `Google network diagnostics found ${networkFailures} network issue${networkFailures === 1 ? "" : "s"}.`);
         } catch (error) {
           resultEl.setText(error instanceof Error ? error.message : "Diagnostics failed.");
         } finally {

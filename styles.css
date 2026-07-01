@@ -44,3 +44,21 @@
 .obsidian-google-sync-diagnostics p {
   margin: 0.25rem 0;
 }
+
+.obsidian-google-sync-diagnostic-item {
+  border-bottom: 1px solid var(--background-modifier-border);
+  padding: 0.5rem 0;
+}
+
+.obsidian-google-sync-diagnostic-item:last-child {
+  border-bottom: 0;
+}
+
+.obsidian-google-sync-diagnostic-item pre {
+  background: var(--background-secondary);
+  border-radius: 4px;
+  margin: 0.5rem 0 0;
+  overflow-wrap: anywhere;
+  padding: 0.5rem;
+  white-space: pre-wrap;
+}

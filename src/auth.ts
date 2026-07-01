@@ -38,15 +38,23 @@ export type DeviceFlowSession = {
 export type NetworkDiagnosticResult = {
   name: string;
   host: string;
+  url: string;
+  method: string;
   ok: boolean;
+  reachable: boolean;
   status?: number;
+  statusText?: string;
+  responseError?: string;
+  responseDescription?: string;
+  responsePreview?: string;
+  durationMs: number;
   error?: string;
 };
 
 type NetworkDiagnosticTest = {
   name: string;
   host: string;
-  request: Parameters<typeof requestUrl>[0];
+  request: Extract<Parameters<typeof requestUrl>[0], { url: string }>;
 };
 
 export async function runGoogleNetworkDiagnostics(clientId: string, clientSecret: string): Promise<NetworkDiagnosticResult[]> {
@@ -100,11 +108,36 @@ export async function runGoogleNetworkDiagnostics(clientId: string, clientSecret
 
   const results: NetworkDiagnosticResult[] = [];
   for (const test of tests) {
+    const startedAt = Date.now();
     try {
       const response = await requestUrl(test.request);
-      results.push({ name: test.name, host: test.host, ok: true, status: response.status });
+      const body = readDiagnosticBody(response);
+      const parsed = parseDiagnosticBody(body);
+      results.push({
+        name: test.name,
+        host: test.host,
+        url: String(test.request.url),
+        method: test.request.method ?? "GET",
+        ok: response.status >= 200 && response.status < 300,
+        reachable: true,
+        status: response.status,
+        statusText: response.status >= 200 && response.status < 300 ? "HTTP success" : "HTTP error response",
+        responseError: parsed.error,
+        responseDescription: parsed.error_description ?? parsed.message,
+        responsePreview: parsed.preview,
+        durationMs: Date.now() - startedAt
+      });
     } catch (error) {
-      results.push({ name: test.name, host: test.host, ok: false, error: formatDiagnosticError(error) });
+      results.push({
+        name: test.name,
+        host: test.host,
+        url: String(test.request.url),
+        method: test.request.method ?? "GET",
+        ok: false,
+        reachable: false,
+        durationMs: Date.now() - startedAt,
+        error: formatDiagnosticError(error)
+      });
     }
   }
   return results;
@@ -306,4 +339,40 @@ export class GoogleAuth {
 
 function formatDiagnosticError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function readDiagnosticBody(response: Awaited<ReturnType<typeof requestUrl>>): string {
+  if (typeof response.text === "string") return response.text;
+  try {
+    if (response.json !== undefined) return JSON.stringify(response.json);
+  } catch {
+    return "";
+  }
+  return "";
+}
+
+function parseDiagnosticBody(body: string): { error?: string; error_description?: string; message?: string; preview?: string } {
+  if (!body) return {};
+  try {
+    const parsed = JSON.parse(body) as {
+      error?: string | { message?: string; status?: string };
+      error_description?: string;
+      message?: string;
+    };
+    const error = typeof parsed.error === "string" ? parsed.error : parsed.error?.status;
+    const message = parsed.message ?? (typeof parsed.error === "object" ? parsed.error.message : undefined);
+    return {
+      error,
+      error_description: parsed.error_description,
+      message,
+      preview: truncateDiagnosticText(body)
+    };
+  } catch {
+    return { preview: truncateDiagnosticText(body.replace(/\s+/g, " ").trim()) };
+  }
+}
+
+function truncateDiagnosticText(value: string): string | undefined {
+  if (!value) return undefined;
+  return value.length > 220 ? `${value.slice(0, 220)}...` : value;
 }
