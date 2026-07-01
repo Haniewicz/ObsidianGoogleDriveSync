@@ -115,8 +115,6 @@ run("gh", [
   "styles.css",
   "--title",
   tag,
-  "--target",
-  "HEAD",
   "--generate-notes",
   ...(mode === "dev" ? ["--prerelease"] : [])
 ]);
