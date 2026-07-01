@@ -101,24 +101,36 @@ export class GoogleDriveClient {
     return snapshot;
   }
 
-  async createBackup(state: RemoteState, deviceId: string, deviceName: string, maxBackups: number): Promise<BackupMeta> {
+  async createBackup(
+    state: RemoteState,
+    changedPaths: string[],
+    deletedPaths: string[],
+    deviceId: string,
+    deviceName: string,
+    maxBackups: number
+  ): Promise<BackupMeta> {
     const backupsFolderId = await this.ensureFolder(BACKUPS_FOLDER_NAME, state.rootFolderId);
     const createdAt = Date.now();
     const id = `${createdAt}-${deviceId.slice(0, 8)}`;
     const safeName = deviceName.replace(/[^a-z0-9_-]+/gi, "-").replace(/^-+|-+$/g, "") || "device";
     const name = `${new Date(createdAt).toISOString().replace(/[:.]/g, "-")}-${safeName}.json`;
 
-    const activeFiles: BackupData["files"] = {};
-    for (const [path, meta] of Object.entries(state.manifest.files)) {
-      if (!meta.deleted) {
-        activeFiles[path] = { driveFileId: meta.driveFileId, hash: meta.hash, size: meta.size, mtime: meta.mtime };
+    const changedFiles: BackupData["changedFiles"] = {};
+    for (const path of changedPaths) {
+      const meta = state.manifest.files[path];
+      if (meta && !meta.deleted) {
+        changedFiles[path] = { driveFileId: meta.driveFileId, hash: meta.hash, size: meta.size, mtime: meta.mtime };
       }
     }
 
-    const backupData: BackupData = { v: 1, id, createdAt, deviceName, files: activeFiles };
+    const backupData: BackupData = { v: 1, id, createdAt, deviceName, changedFiles, deletedPaths };
     const created = await this.createFile(name, backupsFolderId, JSON.stringify(backupData, null, 2), "application/json");
 
-    const meta: BackupMeta = { id, fileId: created.id, name, createdAt, deviceName, fileCount: Object.keys(activeFiles).length };
+    const meta: BackupMeta = {
+      id, fileId: created.id, name, createdAt, deviceName,
+      changedCount: Object.keys(changedFiles).length,
+      deletedCount: deletedPaths.length
+    };
     const allBackups = [meta, ...(state.manifest.backups ?? [])];
     state.manifest.backups = allBackups.slice(0, maxBackups);
     for (const old of allBackups.slice(maxBackups)) {

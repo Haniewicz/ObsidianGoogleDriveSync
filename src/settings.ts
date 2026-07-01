@@ -359,7 +359,7 @@ export class GoogleDriveSyncSettingTab extends PluginSettingTab {
       for (const backup of backups) {
         new Setting(listEl)
           .setName(new Date(backup.createdAt).toLocaleString())
-          .setDesc(`${backup.deviceName} — ${backup.fileCount} files`)
+          .setDesc(`${backup.deviceName} — ${backup.changedCount} changed, ${backup.deletedCount} deleted`)
           .addButton((btn) => btn.setButtonText("Preview & Restore").onClick(async () => {
             try {
               btn.setDisabled(true);
@@ -367,7 +367,12 @@ export class GoogleDriveSyncSettingTab extends PluginSettingTab {
               const data = await this.plugin.drive.loadBackupData(backup.fileId);
               btn.setDisabled(false);
               btn.setButtonText("Preview & Restore");
-              const confirmed = await showBackupRestoreModal(this.plugin.app, backup, data);
+              const confirmed = await showBackupRestoreModal(
+                this.plugin.app,
+                backup,
+                data,
+                (fileId) => this.plugin.drive.downloadFile(fileId)
+              );
               if (!confirmed) return;
               await this.plugin.restoreFromBackup(backup);
               this.display();

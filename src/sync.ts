@@ -52,6 +52,8 @@ export class SyncEngine {
     this.running = true;
     const startedAt = Date.now();
     const counters: SyncCounters = { uploads: 0, downloads: 0, localDeletes: 0, remoteDeletes: 0, conflicts: 0, errors: 0 };
+    const changedPaths: string[] = [];
+    const deletedPaths: string[] = [];
     try {
       const local = await this.options.scanner.scan();
       const state = await this.options.drive.loadRemoteState(this.options.getRemoteFolderName(), this.options.getVaultId());
@@ -76,22 +78,30 @@ export class SyncEngine {
         if (localMeta && remoteMeta && !remoteMeta.deleted && localMeta.hash === lastHash && remoteMeta.hash === lastHash) continue;
 
         if (localMeta && remoteMeta && !remoteMeta.deleted && localMeta.hash !== lastHash && remoteMeta.hash === lastHash) {
+          changedPaths.push(path);
           await this.uploadLocal(path, localMeta, state.filesFolderId, state.manifest, index, counters);
           continue;
         }
 
         if (localMeta && remoteMeta && !remoteMeta.deleted && localMeta.hash === lastHash && remoteMeta.hash !== lastHash) {
+          changedPaths.push(path);
           await this.downloadRemote(path, remoteMeta, index, counters);
           continue;
         }
 
         if (localMeta && remoteMeta?.deleted && localMeta.hash === lastHash) {
-          if (allowedDeletionKeys.has(`local:${path}`)) await this.safeLocalDelete(path, index, counters);
+          if (allowedDeletionKeys.has(`local:${path}`)) {
+            deletedPaths.push(path);
+            await this.safeLocalDelete(path, index, counters);
+          }
           continue;
         }
 
         if (!localMeta && remoteMeta && !remoteMeta.deleted && remoteMeta.hash === lastHash) {
-          if (allowedDeletionKeys.has(`remote:${path}`)) this.tombstoneRemote(path, state.manifest, index, counters);
+          if (allowedDeletionKeys.has(`remote:${path}`)) {
+            deletedPaths.push(path);
+            this.tombstoneRemote(path, state.manifest, index, counters);
+          }
           continue;
         }
 
@@ -101,25 +111,27 @@ export class SyncEngine {
         }
 
         if (!localMeta && remoteMeta && !remoteMeta.deleted) {
+          changedPaths.push(path);
           await this.downloadRemote(path, remoteMeta, index, counters);
           continue;
         }
 
         if (localMeta && (!remoteMeta || remoteMeta.deleted) && !entry?.deleted) {
+          changedPaths.push(path);
           await this.uploadLocal(path, localMeta, state.filesFolderId, state.manifest, index, counters);
           continue;
         }
 
         if (localMeta && remoteMeta && !remoteMeta.deleted && localMeta.hash !== lastHash && remoteMeta.hash !== lastHash) {
+          changedPaths.push(path);
           const resolved = await this.resolveConflict(path, localMeta, remoteMeta, state.filesFolderId, state.manifest, index, counters);
           if (!resolved) counters.conflicts += 1;
         }
       }
 
-      const changesTotal = counters.uploads + counters.downloads + counters.localDeletes + counters.remoteDeletes;
-      if (this.options.getBackupEnabled() && changesTotal > 0) {
+      if (this.options.getBackupEnabled() && (changedPaths.length > 0 || deletedPaths.length > 0)) {
         try {
-          await this.options.drive.createBackup(state, this.options.getDeviceId(), this.options.getDeviceName(), this.options.getMaxBackups());
+          await this.options.drive.createBackup(state, changedPaths, deletedPaths, this.options.getDeviceId(), this.options.getDeviceName(), this.options.getMaxBackups());
         } catch { /* backup failure must not abort sync */ }
       }
       await this.options.drive.saveManifest(state);
@@ -143,7 +155,8 @@ export class SyncEngine {
       await this.options.drive.createManifestSnapshot(state, this.options.getDeviceId(), this.options.getDeviceName());
       if (this.options.getBackupEnabled()) {
         try {
-          await this.options.drive.createBackup(state, this.options.getDeviceId(), this.options.getDeviceName(), this.options.getMaxBackups());
+          const allPaths = Object.keys(state.manifest.files).filter((p) => !state.manifest.files[p].deleted);
+          await this.options.drive.createBackup(state, allPaths, [], this.options.getDeviceId(), this.options.getDeviceName(), this.options.getMaxBackups());
         } catch { /* ignore */ }
       }
       for (const remote of Object.values(state.manifest.files)) {
@@ -189,7 +202,8 @@ export class SyncEngine {
       const state = await this.options.drive.loadRemoteState(this.options.getRemoteFolderName(), this.options.getVaultId());
       if (this.options.getBackupEnabled()) {
         try {
-          await this.options.drive.createBackup(state, this.options.getDeviceId(), this.options.getDeviceName(), this.options.getMaxBackups());
+          const allPaths = Object.keys(state.manifest.files).filter((p) => !state.manifest.files[p].deleted);
+          await this.options.drive.createBackup(state, allPaths, [], this.options.getDeviceId(), this.options.getDeviceName(), this.options.getMaxBackups());
           await this.options.drive.saveManifest(state); // persist backup metadata before local reset
         } catch { /* ignore */ }
       }
@@ -232,13 +246,7 @@ export class SyncEngine {
     this.running = true;
     try {
       const data = await this.options.drive.loadBackupData(backupFileId);
-      const local = await this.options.scanner.scan();
-      for (const path of Object.keys(local)) {
-        if (!data.files[path]) {
-          await this.safeLocalDelete(path, {});
-        }
-      }
-      for (const [path, entry] of Object.entries(data.files)) {
+      for (const [path, entry] of Object.entries(data.changedFiles)) {
         const content = await this.options.drive.downloadFile(entry.driveFileId);
         await writeVaultFile(this.options.app.vault, path, isLikelyText(path) ? new TextDecoder().decode(content) : content);
       }

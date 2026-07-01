@@ -107,7 +107,8 @@ export type BackupMeta = {
   name: string;
   createdAt: number;
   deviceName: string;
-  fileCount: number;
+  changedCount: number;
+  deletedCount: number;
 };
 
 export type BackupData = {
@@ -115,7 +116,10 @@ export type BackupData = {
   id: string;
   createdAt: number;
   deviceName: string;
-  files: Record<string, BackupFileEntry>;
+  /** Only files whose hash changed compared to the previous backup / last known state */
+  changedFiles: Record<string, BackupFileEntry>;
+  /** Paths that were deleted in this sync */
+  deletedPaths: string[];
 };
 
 export type RemoteFileMeta = {
