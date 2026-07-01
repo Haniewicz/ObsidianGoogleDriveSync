@@ -62,7 +62,7 @@ export default class GoogleDriveSyncPlugin extends Plugin {
     this.registerCommands();
     this.registerVaultEvents();
     this.registerObsidianProtocolHandler("google-drive-vault-sync", (data) => {
-      if (data.action === "import-auth" && typeof data.payload === "string") {
+      if (typeof data.payload === "string" && data.payload) {
         void this.handleAuthImport(data.payload);
       }
     });

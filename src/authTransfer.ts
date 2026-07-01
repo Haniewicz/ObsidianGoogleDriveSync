@@ -12,7 +12,7 @@ export type AuthTransferPayload =
 export function buildTransferUrl(payload: AuthTransferPayload): string {
   const json = JSON.stringify(payload);
   const b64 = btoa(json).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-  return `obsidian://google-drive-vault-sync?action=import-auth&payload=${b64}`;
+  return `obsidian://google-drive-vault-sync?payload=${b64}`;
 }
 
 export function decodeTransferPayload(raw: string): AuthTransferPayload {
