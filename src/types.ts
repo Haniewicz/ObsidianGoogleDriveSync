@@ -101,9 +101,15 @@ export type BackupFileEntry = {
   mtime?: number;
 };
 
+export type BackupFileSource = BackupFileEntry & {
+  content: string | ArrayBuffer;
+  mimeType: string;
+};
+
 export type BackupMeta = {
   id: string;
   fileId: string;
+  folderId?: string;
   name: string;
   createdAt: number;
   deviceName: string;

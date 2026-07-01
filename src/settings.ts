@@ -374,7 +374,11 @@ export class GoogleDriveSyncSettingTab extends PluginSettingTab {
                 (fileId) => this.plugin.drive.downloadFile(fileId)
               );
               if (!confirmed) return;
-              await this.plugin.restoreFromBackup(backup);
+              if (confirmed.type === "file") {
+                await this.plugin.restoreFileFromBackup(backup, confirmed.path);
+              } else {
+                await this.plugin.restoreFromBackup(backup);
+              }
               this.display();
             } catch (error) {
               btn.setDisabled(false);

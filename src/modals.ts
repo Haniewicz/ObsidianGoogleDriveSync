@@ -420,11 +420,11 @@ export function showBackupRestoreModal(
   backup: BackupMeta,
   data: BackupData,
   downloadFile: (fileId: string) => Promise<ArrayBuffer>
-): Promise<boolean> {
+): Promise<BackupRestoreChoice | null> {
   return new Promise((resolve) => {
     const modal = new Modal(app);
     let settled = false;
-    const finish = (value: boolean, close = true) => {
+    const finish = (value: BackupRestoreChoice | null, close = true) => {
       if (settled) return;
       settled = true;
       resolve(value);
@@ -478,7 +478,7 @@ export function showBackupRestoreModal(
                 const backupBuf = await downloadFile(entry.driveFileId);
                 const backupText = new TextDecoder().decode(backupBuf);
                 const localFile = app.vault.getAbstractFileByPath(path);
-                const localText = localFile instanceof TFile ? await app.vault.read(localFile) : "(file does not exist locally)";
+                const localText = localFile instanceof TFile ? await app.vault.read(localFile) : undefined;
                 diffEl.empty();
                 renderDiff(diffEl, backupText, localText);
               } catch (err) {
@@ -494,33 +494,53 @@ export function showBackupRestoreModal(
             }
           });
         }
+
+        if (!isDeleted) {
+          const restoreFile = header.createEl("button", { text: "Restore file" });
+          restoreFile.className = "obsidian-google-sync-diff-btn";
+          restoreFile.addEventListener("click", () => finish({ type: "file", path }));
+        }
       }
     };
     search.addEventListener("input", renderList);
     renderList();
 
     new Setting(modal.contentEl)
-      .addButton((btn) => btn.setButtonText("Restore changed files").setWarning().onClick(() => finish(true)))
-      .addButton((btn) => btn.setButtonText("Cancel").onClick(() => finish(false)));
+      .addButton((btn) => btn.setButtonText("Restore changed files").setWarning().onClick(() => finish({ type: "all" })))
+      .addButton((btn) => btn.setButtonText("Cancel").onClick(() => finish(null)));
 
-    modal.onClose = () => { finish(false, false); modal.contentEl.empty(); };
+    modal.onClose = () => { finish(null, false); modal.contentEl.empty(); };
     modal.open();
   });
 }
+
+export type BackupRestoreChoice = { type: "all" } | { type: "file"; path: string };
 
 function isLikelyTextPath(path: string): boolean {
   const ext = path.split(".").pop()?.toLowerCase() ?? "";
   return ["md", "txt", "json", "yaml", "yml", "csv", "css", "js", "ts", "html", "xml", "canvas"].includes(ext);
 }
 
-function renderDiff(container: HTMLElement, backupText: string, localText: string) {
+function renderDiff(container: HTMLElement, backupText: string, localText?: string) {
+  container.createEl("p", {
+    text: localText === undefined
+      ? "Backed-up version compared with a missing local file."
+      : "Backed-up version compared with the current local file.",
+    cls: "obsidian-google-sync-diff-meta"
+  });
+
   const backupLines = backupText.split("\n");
-  const localLines = localText.split("\n");
+  const localLines = localText?.split("\n") ?? [];
   const MAX_LINES = 300;
 
   const pre = container.createEl("pre", { cls: "obsidian-google-sync-diff-pre" });
+  if (localText === undefined) {
+    renderTextSnapshot(pre, backupLines, MAX_LINES);
+    return;
+  }
+
   if (backupText === localText) {
-    pre.createEl("span", { text: "(no text difference)", cls: "obsidian-google-sync-diff-meta" });
+    pre.createEl("span", { text: "(no text difference between backup and current local file)", cls: "obsidian-google-sync-diff-meta" });
     return;
   }
 
@@ -534,17 +554,36 @@ function renderDiff(container: HTMLElement, backupText: string, localText: strin
     }
     const line = pre.createEl("span");
     if (op.type === "remove") {
-      line.setText(`- ${op.line}\n`);
+      line.setText(`- ${formatDiffLine(op.line)}\n`);
       line.className = "obsidian-google-sync-diff-remove";
     } else if (op.type === "add") {
-      line.setText(`+ ${op.line}\n`);
+      line.setText(`+ ${formatDiffLine(op.line)}\n`);
       line.className = "obsidian-google-sync-diff-add";
     } else {
-      line.setText(`  ${op.line}\n`);
+      line.setText(`  ${formatDiffLine(op.line)}\n`);
       line.className = "obsidian-google-sync-diff-ctx";
     }
     count++;
   }
+}
+
+function renderTextSnapshot(pre: HTMLElement, lines: string[], maxLines: number) {
+  for (let i = 0; i < Math.min(lines.length, maxLines); i++) {
+    const line = pre.createEl("span");
+    line.setText(`- ${formatDiffLine(lines[i])}\n`);
+    line.className = "obsidian-google-sync-diff-remove";
+  }
+  if (lines.length > maxLines) {
+    pre.createEl("span", { text: "\n… snapshot truncated …", cls: "obsidian-google-sync-diff-meta" });
+  }
+}
+
+function formatDiffLine(line: string): string {
+  if (line.length === 0) return "␀";
+  return line
+    .replace(/\r/g, "␍")
+    .replace(/\t/g, "⇥")
+    .replace(/ /g, "·");
 }
 
 type DiffOp = { type: "ctx" | "add" | "remove"; line: string };

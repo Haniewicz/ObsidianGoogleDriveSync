@@ -173,8 +173,14 @@ export default class GoogleDriveSyncPlugin extends Plugin {
     this.onConnectionChange?.();
   }
 
+  async restoreFileFromBackup(backup: import("./types").BackupMeta, path: string): Promise<void> {
+    await this.syncEngine.restoreFileFromBackup(backup.fileId, path);
+    new Notice(`Restored ${path} from backup (${new Date(backup.createdAt).toLocaleString()}).`);
+    this.onConnectionChange?.();
+  }
+
   async deleteBackup(backup: import("./types").BackupMeta): Promise<void> {
-    await this.drive.trashFile(backup.fileId);
+    await this.drive.trashFile(backup.folderId ?? backup.fileId);
     const state = await this.drive.loadRemoteState(this.settings.remoteFolderName, this.getVaultId());
     state.manifest.backups = (state.manifest.backups ?? []).filter((b) => b.id !== backup.id);
     await this.drive.saveManifest(state);
