@@ -78,6 +78,7 @@ export type RemoteManifest = {
   command?: RemoteSyncCommand;
   snapshots?: RemoteSnapshotMeta[];
   backups?: BackupMeta[];
+  manualBackups?: BackupMeta[];
 };
 
 export type RemoteSyncCommand = {
@@ -114,6 +115,8 @@ export type BackupMeta = {
   fileId: string;
   folderId?: string;
   name: string;
+  label?: string;
+  kind?: "auto" | "manual";
   createdAt: number;
   deviceName: string;
   changedCount: number;
@@ -125,6 +128,8 @@ export type BackupData = {
   id: string;
   createdAt: number;
   deviceName: string;
+  label?: string;
+  kind?: "auto" | "manual";
   /** True for backups that store independent copies of file contents instead of live synced file IDs */
   snapshotFiles?: boolean;
   /** Only files whose hash changed compared to the previous backup / last known state */

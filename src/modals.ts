@@ -437,7 +437,9 @@ export function showBackupRestoreModal(
       cls: "obsidian-google-sync-status-row"
     });
     modal.contentEl.createEl("p", {
-      text: `Changed: ${backup.changedCount} files. Deleted: ${backup.deletedCount} files. Restoring overwrites those files with their backed-up versions.`,
+      text: backup.kind === "manual"
+        ? `Full backup: ${backup.changedCount} files. Restoring overwrites those files with their backed-up versions.`
+        : `Changed: ${backup.changedCount} files. Deleted: ${backup.deletedCount} files. Restoring overwrites those files with their backed-up versions.`,
       cls: "obsidian-google-sync-status-row"
     });
     const hasSnapshotFiles = data.snapshotFiles === true || backup.folderId !== undefined;
@@ -513,7 +515,7 @@ export function showBackupRestoreModal(
     renderList();
 
     new Setting(modal.contentEl)
-      .addButton((btn) => btn.setButtonText("Restore changed files").setWarning().onClick(() => finish({ type: "all" })))
+      .addButton((btn) => btn.setButtonText(backup.kind === "manual" ? "Restore all files" : "Restore changed files").setWarning().onClick(() => finish({ type: "all" })))
       .addButton((btn) => btn.setButtonText("Cancel").onClick(() => finish(null)));
 
     modal.onClose = () => { finish(null, false); modal.contentEl.empty(); };
@@ -522,6 +524,40 @@ export function showBackupRestoreModal(
 }
 
 export type BackupRestoreChoice = { type: "all" } | { type: "file"; path: string };
+
+export function requestManualBackupName(app: App): Promise<string | null> {
+  return new Promise((resolve) => {
+    const modal = new Modal(app);
+    let settled = false;
+    let value = `Manual backup ${new Date().toLocaleString()}`;
+    const finish = (result: string | null, close = true) => {
+      if (settled) return;
+      settled = true;
+      resolve(result);
+      if (close) modal.close();
+    };
+
+    modal.titleEl.setText("Create manual backup");
+    modal.contentEl.createEl("p", {
+      text: "Name this full backup. Manual backups are stored separately and are deleted only when you delete them.",
+      cls: "obsidian-google-sync-status-row"
+    });
+    new Setting(modal.contentEl)
+      .setName("Backup name")
+      .addText((text) => text
+        .setValue(value)
+        .onChange((nextValue) => { value = nextValue; }));
+    new Setting(modal.contentEl)
+      .addButton((btn) => btn.setButtonText("Create backup").setCta().onClick(() => {
+        const trimmed = value.trim();
+        if (trimmed) finish(trimmed);
+      }))
+      .addButton((btn) => btn.setButtonText("Cancel").onClick(() => finish(null)));
+
+    modal.onClose = () => { finish(null, false); modal.contentEl.empty(); };
+    modal.open();
+  });
+}
 
 function isLikelyTextPath(path: string): boolean {
   const ext = path.split(".").pop()?.toLowerCase() ?? "";

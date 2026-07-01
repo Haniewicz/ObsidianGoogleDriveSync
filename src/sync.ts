@@ -257,6 +257,29 @@ export class SyncEngine {
     }).sort();
   }
 
+  async createManualBackup(label: string): Promise<void> {
+    if (this.running) throw new Error("Google Drive sync is already running.");
+    this.running = true;
+    try {
+      const local = await this.options.scanner.scan();
+      const state = await this.options.drive.loadRemoteState(this.options.getRemoteFolderName(), this.options.getVaultId());
+      const backupFiles: Record<string, BackupFileSource> = {};
+      for (const [path, meta] of Object.entries(local)) {
+        await this.captureLocalBackup(backupFiles, path, meta);
+      }
+      await this.options.drive.createManualBackup(
+        state,
+        backupFiles,
+        label,
+        this.options.getDeviceId(),
+        this.options.getDeviceName()
+      );
+      await this.options.drive.saveManifest(state);
+    } finally {
+      this.running = false;
+    }
+  }
+
   async restoreFromBackup(backupFileId: string): Promise<void> {
     if (this.running) throw new Error("Google Drive sync is already running.");
     this.running = true;

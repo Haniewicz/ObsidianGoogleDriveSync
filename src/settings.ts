@@ -1,7 +1,7 @@
 import { Notice, Platform, PluginSettingTab, Setting } from "obsidian";
 import { runGoogleNetworkDiagnostics } from "./auth";
 import GoogleDriveSyncPlugin from "./main";
-import { showBackupRestoreModal } from "./modals";
+import { requestManualBackupName, showBackupRestoreModal } from "./modals";
 
 export class GoogleDriveSyncSettingTab extends PluginSettingTab {
   constructor(private plugin: GoogleDriveSyncPlugin) {
@@ -367,6 +367,28 @@ export class GoogleDriveSyncSettingTab extends PluginSettingTab {
         await this.plugin.saveSettings();
       }));
 
+    new Setting(containerEl)
+      .setName("Manual full backup")
+      .setDesc("Create a named full backup in separate storage. Manual backups are deleted only when you delete them.")
+      .addButton((btn) => btn.setButtonText("Create manual backup").setCta().setDisabled(!connected).onClick(async () => {
+        const label = await requestManualBackupName(this.plugin.app);
+        if (!label) return;
+        try {
+          btn.setDisabled(true);
+          btn.setButtonText("Creating...");
+          await this.plugin.createManualBackup(label);
+          this.display();
+        } catch (error) {
+          btn.setDisabled(false);
+          btn.setButtonText("Create manual backup");
+          new Notice(error instanceof Error ? error.message : "Manual backup failed.");
+        }
+      }));
+
+    new Setting(containerEl).setName("Manual backups").setHeading();
+    this.renderManualBackups(containerEl, connected);
+
+    new Setting(containerEl).setName("Automatic backups").setHeading();
     const listEl = containerEl.createDiv("obsidian-google-sync-backup-list");
     listEl.setText(connected ? "Loading backups…" : "Connect Google Drive to manage backups.");
     if (!connected) return;
@@ -418,6 +440,61 @@ export class GoogleDriveSyncSettingTab extends PluginSettingTab {
       }
     }).catch((error) => {
       listEl.setText(error instanceof Error ? error.message : "Could not load backups.");
+    });
+  }
+
+  private renderManualBackups(containerEl: HTMLElement, connected: boolean) {
+    const listEl = containerEl.createDiv("obsidian-google-sync-backup-list");
+    listEl.setText(connected ? "Loading manual backups…" : "Connect Google Drive to manage manual backups.");
+    if (!connected) return;
+
+    void this.plugin.getManualBackups().then((backups) => {
+      listEl.empty();
+      if (backups.length === 0) {
+        listEl.setText("No manual backups yet.");
+        return;
+      }
+      for (const backup of backups) {
+        new Setting(listEl)
+          .setName(backup.label || new Date(backup.createdAt).toLocaleString())
+          .setDesc(`${new Date(backup.createdAt).toLocaleString()} — ${backup.deviceName} — ${backup.changedCount} files`)
+          .addButton((btn) => btn.setButtonText("Preview & Restore").onClick(async () => {
+            try {
+              btn.setDisabled(true);
+              btn.setButtonText("Loading…");
+              const data = await this.plugin.drive.loadBackupData(backup.fileId);
+              btn.setDisabled(false);
+              btn.setButtonText("Preview & Restore");
+              const confirmed = await showBackupRestoreModal(
+                this.plugin.app,
+                backup,
+                data,
+                (fileId) => this.plugin.drive.downloadFile(fileId)
+              );
+              if (!confirmed) return;
+              if (confirmed.type === "file") {
+                await this.plugin.restoreFileFromBackup(backup, confirmed.path);
+              } else {
+                await this.plugin.restoreFromBackup(backup);
+              }
+              this.display();
+            } catch (error) {
+              btn.setDisabled(false);
+              btn.setButtonText("Preview & Restore");
+              new Notice(error instanceof Error ? error.message : "Restore failed.");
+            }
+          }))
+          .addButton((btn) => btn.setButtonText("Delete").setWarning().onClick(async () => {
+            try {
+              await this.plugin.deleteManualBackup(backup);
+              this.display();
+            } catch (error) {
+              new Notice(error instanceof Error ? error.message : "Delete failed.");
+            }
+          }));
+      }
+    }).catch((error) => {
+      listEl.setText(error instanceof Error ? error.message : "Could not load manual backups.");
     });
   }
 
