@@ -30,7 +30,7 @@ export class GoogleDriveSyncSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("Connected status")
       .setDesc(connected ? this.plugin.accountLabel || "Connected" : "Not connected")
-      .addButton((button) => button.setButtonText("Sync now").setDisabled(!connected || !initialSyncCompleted).onClick(() => this.plugin.syncNow()));
+      .addButton((button) => button.setButtonText("Sync now").setDisabled(!connected || !this.plugin.isInitialSyncCompleted()).onClick(() => this.plugin.syncNow(true)));
 
     new Setting(containerEl)
       .setName("OAuth client ID")

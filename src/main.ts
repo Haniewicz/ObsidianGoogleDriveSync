@@ -1,4 +1,4 @@
-import { Notice, Platform, Plugin, TAbstractFile } from "obsidian";
+import { Notice, Platform, Plugin, TAbstractFile, setIcon } from "obsidian";
 import { GoogleAuth } from "./auth";
 import { decodeTransferPayload } from "./authTransfer";
 import { GoogleDriveClient } from "./drive";
@@ -20,6 +20,7 @@ export default class GoogleDriveSyncPlugin extends Plugin {
   syncEngine!: SyncEngine;
   accountLabel?: string;
   onConnectionChange?: () => void;
+  private statusBarEl!: HTMLElement;
   private syncTimer?: number;
   private cloudWatchTimer?: number;
   private debounceTimer?: number;
@@ -61,6 +62,12 @@ export default class GoogleDriveSyncPlugin extends Plugin {
     this.addSettingTab(new GoogleDriveSyncSettingTab(this));
     this.registerCommands();
     this.registerVaultEvents();
+    this.statusBarEl = this.addStatusBarItem();
+    this.statusBarEl.addClass("obsidian-google-sync-status-bar");
+    this.statusBarEl.setAttribute("aria-label", "Google Drive Sync: click to sync");
+    this.statusBarEl.setAttribute("aria-label-position", "top");
+    this.statusBarEl.addEventListener("click", () => void this.syncNow(true));
+    this.updateStatusBar();
     this.registerObsidianProtocolHandler("google-drive-vault-sync", (data) => {
       if (typeof data.payload === "string" && data.payload) {
         void this.handleAuthImport(data.payload);
@@ -185,14 +192,14 @@ export default class GoogleDriveSyncPlugin extends Plugin {
     await this.savePluginData({ auth: undefined });
   }
 
-  async syncNow() {
+  async syncNow(manual = false) {
     if (!this.getStoredAuth()) {
-      new Notice("Connect Google Drive before syncing.");
+      if (manual) new Notice("Connect Google Drive before syncing.");
       await this.setSyncStatus({ state: "disconnected" });
       return;
     }
     if (!this.isInitialSyncCompleted()) {
-      new Notice("Choose first sync direction before syncing.");
+      if (manual) new Notice("Choose first sync direction before syncing.");
       this.onConnectionChange?.();
       return;
     }
@@ -314,14 +321,14 @@ export default class GoogleDriveSyncPlugin extends Plugin {
       id: "sync-now",
       name: "Sync now",
       icon: "refresh-cw",
-      callback: () => void this.syncNow()
+      callback: () => void this.syncNow(true)
     });
     this.addCommand({
       id: "sync-now-mobile",
       name: "Sync now",
       icon: "refresh-cw",
       mobileOnly: true,
-      callback: () => void this.syncNow()
+      callback: () => void this.syncNow(true)
     });
     this.addCommand({
       id: "connect-google-drive",
@@ -448,7 +455,27 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 
   private async setSyncStatus(status: SyncStatus) {
     await this.savePluginData({ syncStatus: status });
+    this.updateStatusBar();
     this.onConnectionChange?.();
+  }
+
+  private updateStatusBar() {
+    if (!this.statusBarEl) return;
+    const state = this.pluginData.syncStatus?.state ?? (this.getStoredAuth() ? "idle" : "disconnected");
+    this.statusBarEl.empty();
+    const iconName =
+      state === "syncing" ? "refresh-cw" :
+      state === "error" ? "alert-circle" :
+      state === "disconnected" ? "cloud-off" :
+      "cloud";
+    setIcon(this.statusBarEl, iconName);
+    this.statusBarEl.setAttribute(
+      "aria-label",
+      state === "syncing" ? "Google Drive: syncing…" :
+      state === "error" ? "Google Drive: sync error — click to retry" :
+      state === "disconnected" ? "Google Drive: not connected" :
+      "Google Drive: click to sync"
+    );
   }
 
   private async recordSyncSuccess(summary: SyncSummary) {
