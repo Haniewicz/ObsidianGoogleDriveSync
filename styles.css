@@ -32,3 +32,15 @@
 .obsidian-google-sync-snapshot-list p {
   margin: 0.25rem 0;
 }
+
+.obsidian-google-sync-diagnostics {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  color: var(--text-muted);
+  margin: 0.5rem 0 1rem;
+  padding: 0.5rem;
+}
+
+.obsidian-google-sync-diagnostics p {
+  margin: 0.25rem 0;
+}

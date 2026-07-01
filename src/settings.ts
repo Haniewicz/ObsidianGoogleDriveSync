@@ -1,4 +1,5 @@
 import { Notice, PluginSettingTab, Setting } from "obsidian";
+import { runGoogleNetworkDiagnostics } from "./auth";
 import GoogleDriveSyncPlugin from "./main";
 
 export class GoogleDriveSyncSettingTab extends PluginSettingTab {
@@ -84,6 +85,7 @@ export class GoogleDriveSyncSettingTab extends PluginSettingTab {
         }
       }));
 
+    this.renderDiagnostics(containerEl);
     this.renderFirstSync(containerEl, connected);
 
     new Setting(containerEl)
@@ -266,6 +268,35 @@ export class GoogleDriveSyncSettingTab extends PluginSettingTab {
           this.display();
         } catch (error) {
           new Notice(error instanceof Error ? error.message : "First sync failed.");
+        }
+      }));
+  }
+
+  private renderDiagnostics(containerEl: HTMLElement) {
+    new Setting(containerEl).setName("Connection diagnostics").setHeading();
+    const resultEl = containerEl.createDiv("obsidian-google-sync-diagnostics");
+    resultEl.setText("Run diagnostics to check whether this device can reach Google OAuth and Drive endpoints.");
+    new Setting(containerEl)
+      .setName("Google network diagnostics")
+      .setDesc("HTTP 400/401 responses still mean the device reached Google. Network or DNS errors point to the mobile connection layer.")
+      .addButton((button) => button.setButtonText("Run diagnostics").onClick(async () => {
+        button.setDisabled(true);
+        button.setButtonText("Running...");
+        resultEl.setText("Running diagnostics...");
+        try {
+          const results = await runGoogleNetworkDiagnostics(this.plugin.settings.clientId, this.plugin.settings.clientSecret);
+          resultEl.empty();
+          for (const result of results) {
+            const status = result.ok ? `OK, HTTP ${result.status}` : `Failed: ${result.error ?? "Unknown error"}`;
+            resultEl.createEl("p", { text: `${result.name} (${result.host}): ${status}` });
+          }
+          const failed = results.filter((result) => !result.ok).length;
+          new Notice(failed === 0 ? "Google network diagnostics passed." : `Google network diagnostics found ${failed} issue${failed === 1 ? "" : "s"}.`);
+        } catch (error) {
+          resultEl.setText(error instanceof Error ? error.message : "Diagnostics failed.");
+        } finally {
+          button.setDisabled(false);
+          button.setButtonText("Run diagnostics");
         }
       }));
   }

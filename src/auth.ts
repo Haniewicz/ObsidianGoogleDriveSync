@@ -5,6 +5,8 @@ import { sleep } from "./utils";
 const DEVICE_ENDPOINT = "https://oauth2.googleapis.com/device/code";
 const TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
 const USERINFO_ENDPOINT = "https://www.googleapis.com/oauth2/v3/userinfo";
+const DRIVE_ABOUT_ENDPOINT = "https://www.googleapis.com/drive/v3/about?fields=user";
+const GOOGLE_ACCOUNTS_ENDPOINT = "https://accounts.google.com/.well-known/openid-configuration";
 
 type DeviceResponse = {
   device_code: string;
@@ -32,6 +34,81 @@ export type DeviceFlowSession = {
   cancel: () => void;
   done: Promise<StoredAuth>;
 };
+
+export type NetworkDiagnosticResult = {
+  name: string;
+  host: string;
+  ok: boolean;
+  status?: number;
+  error?: string;
+};
+
+type NetworkDiagnosticTest = {
+  name: string;
+  host: string;
+  request: Parameters<typeof requestUrl>[0];
+};
+
+export async function runGoogleNetworkDiagnostics(clientId: string, clientSecret: string): Promise<NetworkDiagnosticResult[]> {
+  const tests: NetworkDiagnosticTest[] = [
+    {
+      name: "OAuth device endpoint",
+      host: "oauth2.googleapis.com",
+      request: {
+        url: DEVICE_ENDPOINT,
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ client_id: clientId.trim() || "diagnostic-client-id", scope: DRIVE_SCOPE }).toString(),
+        throw: false
+      }
+    },
+    {
+      name: "OAuth token endpoint",
+      host: "oauth2.googleapis.com",
+      request: {
+        url: TOKEN_ENDPOINT,
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          client_id: clientId.trim() || "diagnostic-client-id",
+          client_secret: clientSecret.trim() || "diagnostic-client-secret",
+          refresh_token: "diagnostic-refresh-token",
+          grant_type: "refresh_token"
+        }).toString(),
+        throw: false
+      }
+    },
+    {
+      name: "Drive API endpoint",
+      host: "www.googleapis.com",
+      request: {
+        url: DRIVE_ABOUT_ENDPOINT,
+        method: "GET",
+        throw: false
+      }
+    },
+    {
+      name: "Google Accounts endpoint",
+      host: "accounts.google.com",
+      request: {
+        url: GOOGLE_ACCOUNTS_ENDPOINT,
+        method: "GET",
+        throw: false
+      }
+    }
+  ];
+
+  const results: NetworkDiagnosticResult[] = [];
+  for (const test of tests) {
+    try {
+      const response = await requestUrl(test.request);
+      results.push({ name: test.name, host: test.host, ok: true, status: response.status });
+    } catch (error) {
+      results.push({ name: test.name, host: test.host, ok: false, error: formatDiagnosticError(error) });
+    }
+  }
+  return results;
+}
 
 export class GoogleAuth {
   private auth?: StoredAuth;
@@ -219,10 +296,14 @@ export class GoogleAuth {
   }
 
   private formatNetworkError(error: unknown, host: string): Error {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = formatDiagnosticError(error);
     if (Platform.isMobile && /UnknownHostException|Unable to resolve host|ERR_NAME_NOT_RESOLVED/i.test(message)) {
       return new Error(`Could not resolve ${host}. Check the mobile device internet connection, Private DNS/VPN settings, and whether Obsidian has network access, then try connecting Google Drive again.`);
     }
     return error instanceof Error ? error : new Error(message);
   }
+}
+
+function formatDiagnosticError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
