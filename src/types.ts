@@ -17,6 +17,8 @@ export type GoogleDriveSyncSettings = {
   maxDeletionPercent: number;
   ignoredPaths: string;
   debugMode: boolean;
+  backupEnabled: boolean;
+  maxBackups: number;
 };
 
 export type StoredAuth = {
@@ -72,6 +74,7 @@ export type RemoteManifest = {
   files: Record<string, RemoteFileMeta>;
   command?: RemoteSyncCommand;
   snapshots?: RemoteSnapshotMeta[];
+  backups?: BackupMeta[];
 };
 
 export type RemoteSyncCommand = {
@@ -89,6 +92,30 @@ export type RemoteSnapshotMeta = {
   createdAt: number;
   createdByDeviceId: string;
   createdByDeviceName: string;
+};
+
+export type BackupFileEntry = {
+  driveFileId: string;
+  hash: string;
+  size: number;
+  mtime?: number;
+};
+
+export type BackupMeta = {
+  id: string;
+  fileId: string;
+  name: string;
+  createdAt: number;
+  deviceName: string;
+  fileCount: number;
+};
+
+export type BackupData = {
+  v: 1;
+  id: string;
+  createdAt: number;
+  deviceName: string;
+  files: Record<string, BackupFileEntry>;
 };
 
 export type RemoteFileMeta = {
@@ -167,5 +194,7 @@ export const DEFAULT_SETTINGS: GoogleDriveSyncSettings = {
   requestConcurrency: 2,
   maxDeletionPercent: 20,
   ignoredPaths: "",
-  debugMode: false
+  debugMode: false,
+  backupEnabled: true,
+  maxBackups: 10
 };

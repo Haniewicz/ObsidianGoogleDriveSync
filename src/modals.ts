@@ -1,7 +1,7 @@
 import { App, Modal, Notice, Platform, Setting } from "obsidian";
 import { DeviceFlowSession } from "./auth";
 import { AuthTransferPayload, buildTransferUrl, decryptAuth, encryptAuth, generateQRCodeSvg } from "./authTransfer";
-import { InitialSyncDirection, PlannedDeletion, StoredAuth } from "./types";
+import { BackupData, BackupMeta, InitialSyncDirection, PlannedDeletion, StoredAuth } from "./types";
 
 export class DeviceFlowModal extends Modal {
   private timerId?: number;
@@ -407,6 +407,58 @@ export function showAuthImportModal(app: App, payload: AuthTransferPayload): Pro
     }
 
     modal.onClose = () => { finish(null, false); modal.contentEl.empty(); };
+    modal.open();
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Backup – Preview & Restore
+// ---------------------------------------------------------------------------
+
+export function showBackupRestoreModal(app: App, backup: BackupMeta, data: BackupData): Promise<boolean> {
+  return new Promise((resolve) => {
+    const modal = new Modal(app);
+    let settled = false;
+    const finish = (value: boolean, close = true) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+      if (close) modal.close();
+    };
+
+    modal.titleEl.setText("Restore from backup");
+    modal.contentEl.createEl("p", {
+      text: `Backup from ${new Date(backup.createdAt).toLocaleString()} — created on ${backup.deviceName}.`,
+      cls: "obsidian-google-sync-status-row"
+    });
+    modal.contentEl.createEl("p", {
+      text: "All current local files will be replaced with the files listed below. The sync index will be reset — the next sync will re-align with Google Drive.",
+      cls: "obsidian-google-sync-status-row"
+    });
+
+    const paths = Object.keys(data.files).sort();
+    modal.contentEl.createEl("p", { text: `Files in this backup: ${paths.length}` });
+
+    const search = modal.contentEl.createEl("input", { type: "search", placeholder: "Search files" });
+    search.style.width = "100%";
+    search.style.marginBottom = "0.5rem";
+
+    const listEl = modal.contentEl.createDiv("google-drive-sync-deletion-list");
+    const render = () => {
+      listEl.empty();
+      const q = search.value.toLowerCase();
+      for (const path of paths.filter((p) => p.toLowerCase().includes(q))) {
+        listEl.createEl("p", { text: path, cls: "obsidian-google-sync-status-row" });
+      }
+    };
+    search.addEventListener("input", render);
+    render();
+
+    new Setting(modal.contentEl)
+      .addButton((btn) => btn.setButtonText("Restore").setWarning().onClick(() => finish(true)))
+      .addButton((btn) => btn.setButtonText("Cancel").onClick(() => finish(false)));
+
+    modal.onClose = () => { finish(false, false); modal.contentEl.empty(); };
     modal.open();
   });
 }

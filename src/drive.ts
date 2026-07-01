@@ -1,6 +1,6 @@
 import { GoogleAuth } from "./auth";
 import { requestGoogleUrl } from "./googleRequest";
-import { RemoteManifest, RemoteSnapshotMeta, RemoteState } from "./types";
+import { BackupData, BackupMeta, RemoteManifest, RemoteSnapshotMeta, RemoteState } from "./types";
 import { RequestQueue } from "./queue";
 import { encodeQuery } from "./utils";
 
@@ -9,6 +9,7 @@ const UPLOAD_API = "https://www.googleapis.com/upload/drive/v3";
 const FOLDER_MIME = "application/vnd.google-apps.folder";
 const MANIFEST_NAME = ".obsidian-sync-manifest.json";
 const SNAPSHOTS_FOLDER_NAME = ".obsidian-sync-snapshots";
+const BACKUPS_FOLDER_NAME = ".obsidian-sync-backups";
 const MAX_SNAPSHOTS = 10;
 
 type DriveFile = {
@@ -98,6 +99,36 @@ export class GoogleDriveClient {
       await this.trashFile(old.fileId);
     }
     return snapshot;
+  }
+
+  async createBackup(state: RemoteState, deviceId: string, deviceName: string, maxBackups: number): Promise<BackupMeta> {
+    const backupsFolderId = await this.ensureFolder(BACKUPS_FOLDER_NAME, state.rootFolderId);
+    const createdAt = Date.now();
+    const id = `${createdAt}-${deviceId.slice(0, 8)}`;
+    const safeName = deviceName.replace(/[^a-z0-9_-]+/gi, "-").replace(/^-+|-+$/g, "") || "device";
+    const name = `${new Date(createdAt).toISOString().replace(/[:.]/g, "-")}-${safeName}.json`;
+
+    const activeFiles: BackupData["files"] = {};
+    for (const [path, meta] of Object.entries(state.manifest.files)) {
+      if (!meta.deleted) {
+        activeFiles[path] = { driveFileId: meta.driveFileId, hash: meta.hash, size: meta.size, mtime: meta.mtime };
+      }
+    }
+
+    const backupData: BackupData = { v: 1, id, createdAt, deviceName, files: activeFiles };
+    const created = await this.createFile(name, backupsFolderId, JSON.stringify(backupData, null, 2), "application/json");
+
+    const meta: BackupMeta = { id, fileId: created.id, name, createdAt, deviceName, fileCount: Object.keys(activeFiles).length };
+    const allBackups = [meta, ...(state.manifest.backups ?? [])];
+    state.manifest.backups = allBackups.slice(0, maxBackups);
+    for (const old of allBackups.slice(maxBackups)) {
+      await this.trashFile(old.fileId);
+    }
+    return meta;
+  }
+
+  async loadBackupData(fileId: string): Promise<BackupData> {
+    return this.downloadJson<BackupData>(fileId);
   }
 
   async downloadFile(fileId: string): Promise<ArrayBuffer> {

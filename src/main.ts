@@ -57,7 +57,9 @@ export default class GoogleDriveSyncPlugin extends Plugin {
       getDeviceId: () => this.getDeviceId(),
       getDeviceName: () => this.getDeviceName(),
       getAppliedCommandIds: () => this.pluginData.appliedCommandIds ?? [],
-      setAppliedCommandIds: async (appliedCommandIds) => this.savePluginData({ appliedCommandIds })
+      setAppliedCommandIds: async (appliedCommandIds) => this.savePluginData({ appliedCommandIds }),
+      getBackupEnabled: () => this.settings.backupEnabled,
+      getMaxBackups: () => this.settings.maxBackups
     });
 
     this.addSettingTab(new GoogleDriveSyncSettingTab(this));
@@ -159,6 +161,25 @@ export default class GoogleDriveSyncPlugin extends Plugin {
     await this.setSyncStatus({ state: "disconnected" });
     this.onConnectionChange?.();
   }
+
+  async getBackups(): Promise<import("./types").BackupMeta[]> {
+    const state = await this.drive.loadRemoteState(this.settings.remoteFolderName, this.getVaultId());
+    return state.manifest.backups ?? [];
+  }
+
+  async restoreFromBackup(backup: import("./types").BackupMeta): Promise<void> {
+    await this.syncEngine.restoreFromBackup(backup.fileId);
+    new Notice(`Vault restored from backup (${new Date(backup.createdAt).toLocaleString()}).`);
+    this.onConnectionChange?.();
+  }
+
+  async deleteBackup(backup: import("./types").BackupMeta): Promise<void> {
+    await this.drive.trashFile(backup.fileId);
+    const state = await this.drive.loadRemoteState(this.settings.remoteFolderName, this.getVaultId());
+    state.manifest.backups = (state.manifest.backups ?? []).filter((b) => b.id !== backup.id);
+    await this.drive.saveManifest(state);
+  }
+
 
   showAuthExportModal() {
     const auth = this.getStoredAuth();

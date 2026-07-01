@@ -1,6 +1,7 @@
 import { Notice, Platform, PluginSettingTab, Setting } from "obsidian";
 import { runGoogleNetworkDiagnostics } from "./auth";
 import GoogleDriveSyncPlugin from "./main";
+import { showBackupRestoreModal } from "./modals";
 
 export class GoogleDriveSyncSettingTab extends PluginSettingTab {
   constructor(private plugin: GoogleDriveSyncPlugin) {
@@ -96,10 +97,10 @@ export class GoogleDriveSyncSettingTab extends PluginSettingTab {
         this.display();
       }));
 
-    if (Platform.isDesktop && connected) {
+    if (connected) {
       new Setting(containerEl)
         .setName("Transfer to another device")
-        .setDesc("Generate a QR code to import Google Drive credentials on a phone or tablet that can't complete OAuth due to network issues.")
+        .setDesc("Generate a QR code to import Google Drive credentials on another device.")
         .addButton((button) => button.setButtonText("Show QR code").onClick(() => {
           this.plugin.showAuthExportModal();
         }));
@@ -219,7 +220,7 @@ export class GoogleDriveSyncSettingTab extends PluginSettingTab {
           await this.plugin.saveSettings();
       }));
 
-    this.renderSnapshots(containerEl, connected);
+    this.renderBackups(containerEl, connected);
     this.renderDangerZone(containerEl, connected);
   }
 
@@ -239,7 +240,7 @@ export class GoogleDriveSyncSettingTab extends PluginSettingTab {
     ].filter(Boolean) as string[];
     for (const row of rows) containerEl.createEl("p", { text: row, cls: "obsidian-google-sync-status-row" });
     new Setting(containerEl)
-      .addButton((button) => button.setButtonText("Sync now").setDisabled(!connected || !this.plugin.isInitialSyncCompleted()).onClick(() => this.plugin.syncNow()))
+      .addButton((button) => button.setButtonText("Sync now").setDisabled(!connected || !this.plugin.isInitialSyncCompleted()).onClick(() => this.plugin.syncNow(true)))
       .addButton((button) => button.setButtonText("Show command status").setDisabled(!connected).onClick(() => {
         const count = this.plugin.pluginData.appliedCommandIds?.length ?? 0;
         new Notice(`${count} remote reset command${count === 1 ? "" : "s"} applied on this device.`);
@@ -326,24 +327,67 @@ export class GoogleDriveSyncSettingTab extends PluginSettingTab {
       }));
   }
 
-  private renderSnapshots(containerEl: HTMLElement, connected: boolean) {
-    new Setting(containerEl).setName("Snapshots").setHeading();
-    const listEl = containerEl.createDiv("obsidian-google-sync-snapshot-list");
-    listEl.setText(connected ? "Loading snapshots..." : "Connect Google Drive to load snapshots.");
+  private renderBackups(containerEl: HTMLElement, connected: boolean) {
+    new Setting(containerEl).setName("Backups").setHeading();
+
+    new Setting(containerEl)
+      .setName("Auto-backup on sync")
+      .setDesc("Create a backup on Google Drive after each sync that made changes.")
+      .addToggle((toggle) => toggle.setValue(this.plugin.settings.backupEnabled).onChange(async (value) => {
+        this.plugin.settings.backupEnabled = value;
+        await this.plugin.saveSettings();
+      }));
+
+    new Setting(containerEl)
+      .setName("Backups to keep")
+      .setDesc("Maximum number of backups stored on Google Drive. Oldest are deleted automatically.")
+      .addText((text) => text.setValue(String(this.plugin.settings.maxBackups)).onChange(async (value) => {
+        this.plugin.settings.maxBackups = Math.max(1, parseInt(value, 10) || 10);
+        await this.plugin.saveSettings();
+      }));
+
+    const listEl = containerEl.createDiv("obsidian-google-sync-backup-list");
+    listEl.setText(connected ? "Loading backups…" : "Connect Google Drive to manage backups.");
     if (!connected) return;
-    void this.plugin.getRemoteSnapshots().then((snapshots) => {
+
+    void this.plugin.getBackups().then((backups) => {
       listEl.empty();
-      if (snapshots.length === 0) {
-        listEl.setText("No snapshots yet.");
+      if (backups.length === 0) {
+        listEl.setText("No backups yet.");
         return;
       }
-      for (const snapshot of snapshots) {
-        listEl.createEl("p", {
-          text: `${new Date(snapshot.createdAt).toLocaleString()} - ${snapshot.createdByDeviceName} - ${snapshot.name}`
-        });
+      for (const backup of backups) {
+        new Setting(listEl)
+          .setName(new Date(backup.createdAt).toLocaleString())
+          .setDesc(`${backup.deviceName} — ${backup.fileCount} files`)
+          .addButton((btn) => btn.setButtonText("Preview & Restore").onClick(async () => {
+            try {
+              btn.setDisabled(true);
+              btn.setButtonText("Loading…");
+              const data = await this.plugin.drive.loadBackupData(backup.fileId);
+              btn.setDisabled(false);
+              btn.setButtonText("Preview & Restore");
+              const confirmed = await showBackupRestoreModal(this.plugin.app, backup, data);
+              if (!confirmed) return;
+              await this.plugin.restoreFromBackup(backup);
+              this.display();
+            } catch (error) {
+              btn.setDisabled(false);
+              btn.setButtonText("Preview & Restore");
+              new Notice(error instanceof Error ? error.message : "Restore failed.");
+            }
+          }))
+          .addButton((btn) => btn.setButtonText("Delete").setWarning().onClick(async () => {
+            try {
+              await this.plugin.deleteBackup(backup);
+              this.display();
+            } catch (error) {
+              new Notice(error instanceof Error ? error.message : "Delete failed.");
+            }
+          }));
       }
     }).catch((error) => {
-      listEl.setText(error instanceof Error ? error.message : "Could not load snapshots.");
+      listEl.setText(error instanceof Error ? error.message : "Could not load backups.");
     });
   }
 

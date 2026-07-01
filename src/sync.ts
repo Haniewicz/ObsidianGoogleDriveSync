@@ -22,6 +22,8 @@ export type SyncEngineOptions = {
   getDeviceName: () => string;
   getAppliedCommandIds: () => string[];
   setAppliedCommandIds: (ids: string[]) => Promise<void>;
+  getBackupEnabled: () => boolean;
+  getMaxBackups: () => number;
 };
 
 type SyncCounters = {
@@ -114,6 +116,12 @@ export class SyncEngine {
         }
       }
 
+      const changesTotal = counters.uploads + counters.downloads + counters.localDeletes + counters.remoteDeletes;
+      if (this.options.getBackupEnabled() && changesTotal > 0) {
+        try {
+          await this.options.drive.createBackup(state, this.options.getDeviceId(), this.options.getDeviceName(), this.options.getMaxBackups());
+        } catch { /* backup failure must not abort sync */ }
+      }
       await this.options.drive.saveManifest(state);
       await this.options.setIndex(index);
       showConflictNotice(counters.conflicts);
@@ -133,6 +141,11 @@ export class SyncEngine {
       const local = await this.options.scanner.scan();
       const state = await this.options.drive.loadRemoteState(this.options.getRemoteFolderName(), this.options.getVaultId());
       await this.options.drive.createManifestSnapshot(state, this.options.getDeviceId(), this.options.getDeviceName());
+      if (this.options.getBackupEnabled()) {
+        try {
+          await this.options.drive.createBackup(state, this.options.getDeviceId(), this.options.getDeviceName(), this.options.getMaxBackups());
+        } catch { /* ignore */ }
+      }
       for (const remote of Object.values(state.manifest.files)) {
         if (!remote.deleted) {
           await this.options.drive.trashFile(remote.driveFileId);
@@ -174,6 +187,12 @@ export class SyncEngine {
     try {
       const local = await this.options.scanner.scan();
       const state = await this.options.drive.loadRemoteState(this.options.getRemoteFolderName(), this.options.getVaultId());
+      if (this.options.getBackupEnabled()) {
+        try {
+          await this.options.drive.createBackup(state, this.options.getDeviceId(), this.options.getDeviceName(), this.options.getMaxBackups());
+          await this.options.drive.saveManifest(state); // persist backup metadata before local reset
+        } catch { /* ignore */ }
+      }
       const keep = new Set(keepLocalPaths);
       const index: Record<string, SyncIndexEntry> = {};
       for (const path of Object.keys(local)) {
@@ -206,6 +225,27 @@ export class SyncEngine {
       const remote = state.manifest.files[path];
       return !remote || remote.deleted;
     }).sort();
+  }
+
+  async restoreFromBackup(backupFileId: string): Promise<void> {
+    if (this.running) throw new Error("Google Drive sync is already running.");
+    this.running = true;
+    try {
+      const data = await this.options.drive.loadBackupData(backupFileId);
+      const local = await this.options.scanner.scan();
+      for (const path of Object.keys(local)) {
+        if (!data.files[path]) {
+          await this.safeLocalDelete(path, {});
+        }
+      }
+      for (const [path, entry] of Object.entries(data.files)) {
+        const content = await this.options.drive.downloadFile(entry.driveFileId);
+        await writeVaultFile(this.options.app.vault, path, isLikelyText(path) ? new TextDecoder().decode(content) : content);
+      }
+      await this.options.setIndex({});
+    } finally {
+      this.running = false;
+    }
   }
 
   private planDeletions(
