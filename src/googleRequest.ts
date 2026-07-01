@@ -1,5 +1,11 @@
 import { Platform, requestUrl, RequestUrlParam, RequestUrlResponse } from "obsidian";
 
+export class FetchFallbackError extends Error {
+  constructor(readonly primaryError: unknown, readonly fallbackError: unknown) {
+    super(`Obsidian requestUrl failed: ${formatRequestError(primaryError)}; fetch fallback failed: ${formatRequestError(fallbackError)}`);
+  }
+}
+
 export async function requestGoogleUrl(options: RequestUrlParam): Promise<RequestUrlResponse> {
   try {
     return await requestUrl(options);
@@ -8,7 +14,7 @@ export async function requestGoogleUrl(options: RequestUrlParam): Promise<Reques
     try {
       return await fetchRequestUrl(options);
     } catch (fallbackError) {
-      throw new Error(`Obsidian requestUrl failed: ${formatRequestError(error)}; fetch fallback failed: ${formatRequestError(fallbackError)}`);
+      throw new FetchFallbackError(error, fallbackError);
     }
   }
 }
@@ -18,6 +24,7 @@ export function formatRequestError(error: unknown): string {
 }
 
 export function isDnsResolutionError(error: unknown): boolean {
+  if (error instanceof FetchFallbackError) return false;
   return /UnknownHostException|Unable to resolve host|ERR_NAME_NOT_RESOLVED/i.test(formatRequestError(error));
 }
 
