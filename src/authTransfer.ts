@@ -1,4 +1,4 @@
-import QRCode from "qrcode";
+import * as QRCode from "qrcode";
 import { StoredAuth } from "./types";
 
 const PBKDF2_ITERATIONS = 200_000;
@@ -27,7 +27,7 @@ export async function encryptAuth(auth: StoredAuth, password: string): Promise<A
   const iv = crypto.getRandomValues(new Uint8Array(IV_BYTES));
   const keyMaterial = await crypto.subtle.importKey("raw", enc.encode(password), "PBKDF2", false, ["deriveKey"]);
   const key = await crypto.subtle.deriveKey(
-    { name: "PBKDF2", salt, iterations: PBKDF2_ITERATIONS, hash: "SHA-256" },
+    { name: "PBKDF2", salt: salt.buffer as ArrayBuffer, iterations: PBKDF2_ITERATIONS, hash: "SHA-256" },
     keyMaterial,
     { name: "AES-GCM", length: 256 },
     false,
@@ -54,7 +54,7 @@ export async function decryptAuth(
   const data = base64ToBuf(payload.data);
   const keyMaterial = await crypto.subtle.importKey("raw", enc.encode(password), "PBKDF2", false, ["deriveKey"]);
   const key = await crypto.subtle.deriveKey(
-    { name: "PBKDF2", salt, iterations: PBKDF2_ITERATIONS, hash: "SHA-256" },
+    { name: "PBKDF2", salt: salt.buffer as ArrayBuffer, iterations: PBKDF2_ITERATIONS, hash: "SHA-256" },
     keyMaterial,
     { name: "AES-GCM", length: 256 },
     false,
@@ -62,7 +62,7 @@ export async function decryptAuth(
   );
   let plaintext: ArrayBuffer;
   try {
-    plaintext = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, data);
+    plaintext = await crypto.subtle.decrypt({ name: "AES-GCM", iv: iv.buffer as ArrayBuffer }, key, data.buffer as ArrayBuffer);
   } catch {
     throw new Error("Wrong password or corrupted QR data.");
   }
