@@ -1,4 +1,4 @@
-import { App, Modal, Notice, Platform, Setting } from "obsidian";
+import { App, Modal, Notice, Platform, Setting, TFile } from "obsidian";
 import { DeviceFlowSession } from "./auth";
 import { AuthTransferPayload, buildTransferUrl, decryptAuth, encryptAuth, generateQRCodeSvg } from "./authTransfer";
 import { BackupData, BackupMeta, InitialSyncDirection, PlannedDeletion, StoredAuth } from "./types";
@@ -478,7 +478,6 @@ export function showBackupRestoreModal(
                 const backupBuf = await downloadFile(entry.driveFileId);
                 const backupText = new TextDecoder().decode(backupBuf);
                 const localFile = app.vault.getAbstractFileByPath(path);
-                const { TFile } = await import("obsidian");
                 const localText = localFile instanceof TFile ? await app.vault.read(localFile) : "(file does not exist locally)";
                 diffEl.empty();
                 renderDiff(diffEl, backupText, localText);
