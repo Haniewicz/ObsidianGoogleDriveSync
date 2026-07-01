@@ -1,12 +1,12 @@
 import { Notice, Platform, Plugin, TAbstractFile } from "obsidian";
 import { GoogleAuth } from "./auth";
 import { GoogleDriveClient } from "./drive";
-import { DeviceFlowModal, chooseLocalFilesToKeep, confirmDangerAction, confirmResetIndex } from "./modals";
+import { DeviceFlowModal, chooseInitialSyncDirection, chooseLocalFilesToKeep, confirmDangerAction, confirmResetIndex } from "./modals";
 import { RequestQueue } from "./queue";
 import { LocalVaultScanner } from "./scanner";
 import { GoogleDriveSyncSettingTab } from "./settings";
 import { SyncEngine } from "./sync";
-import { DEFAULT_SETTINGS, GoogleDriveSyncSettings, PluginData, RemoteSnapshotMeta, StoredAuth, StoredPluginData, SyncStatus, SyncSummary, defaultIgnoredPaths } from "./types";
+import { DEFAULT_SETTINGS, GoogleDriveSyncSettings, InitialSyncDirection, PluginData, RemoteSnapshotMeta, StoredAuth, StoredPluginData, SyncStatus, SyncSummary, defaultIgnoredPaths } from "./types";
 import { createLogger } from "./utils";
 
 export default class GoogleDriveSyncPlugin extends Plugin {
@@ -63,7 +63,7 @@ export default class GoogleDriveSyncPlugin extends Plugin {
     this.configureTimers();
     void this.refreshAccountLabel();
 
-    if (this.settings.syncOnStartup && this.getStoredAuth()) {
+    if (this.settings.syncOnStartup && this.getStoredAuth() && this.isInitialSyncCompleted()) {
       window.setTimeout(() => void this.syncNow(), 2500);
     }
   }
@@ -91,12 +91,15 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 
   async loadPluginData() {
     const loaded = await this.loadData() as StoredPluginData | null;
+    const index = loaded?.index ?? {};
+    const hasPreviousSync = Object.keys(index).length > 0 || loaded?.syncStatus?.lastSummary !== undefined;
     this.pluginData = {
       auth: loaded?.auth,
-      index: loaded?.index ?? {},
+      index,
       vaultId: loaded?.vaultId,
       deviceId: loaded?.deviceId,
       appliedCommandIds: loaded?.appliedCommandIds ?? [],
+      initialSyncCompleted: loaded?.initialSyncCompleted ?? (loaded?.auth ? hasPreviousSync : false),
       syncStatus: loaded?.syncStatus ?? { state: loaded?.auth ? "idle" : "disconnected" },
       lastRemoteUpdatedAt: loaded?.lastRemoteUpdatedAt,
       lastRemoteCommandId: loaded?.lastRemoteCommandId
@@ -130,7 +133,7 @@ export default class GoogleDriveSyncPlugin extends Plugin {
     await this.refreshAccountLabel();
     new Notice("Google Drive connected.");
     this.onConnectionChange?.();
-    await this.syncNow();
+    await this.promptForInitialSyncIfNeeded();
   }
 
   async disconnectGoogleDrive() {
@@ -154,6 +157,11 @@ export default class GoogleDriveSyncPlugin extends Plugin {
       await this.setSyncStatus({ state: "disconnected" });
       return;
     }
+    if (!this.isInitialSyncCompleted()) {
+      new Notice("Choose first sync direction before syncing.");
+      this.onConnectionChange?.();
+      return;
+    }
     const startedAt = Date.now();
     await this.setSyncStatus({ state: "syncing", lastStartedAt: startedAt, lastError: undefined });
     try {
@@ -174,6 +182,7 @@ export default class GoogleDriveSyncPlugin extends Plugin {
     try {
       const summary = await this.syncEngine.resetCloudFromLocal();
       await this.recordSyncSuccess(summary);
+      await this.markInitialSyncCompleted();
     } catch (error) {
       await this.recordSyncError(error);
       throw error;
@@ -186,6 +195,7 @@ export default class GoogleDriveSyncPlugin extends Plugin {
     try {
       const summary = await this.syncEngine.resetLocalFromCloud(keepLocalPaths);
       await this.recordSyncSuccess(summary);
+      await this.markInitialSyncCompleted();
     } catch (error) {
       await this.recordSyncError(error);
       throw error;
@@ -231,18 +241,18 @@ export default class GoogleDriveSyncPlugin extends Plugin {
   configureTimers() {
     if (this.syncTimer !== undefined) window.clearInterval(this.syncTimer);
     if (this.cloudWatchTimer !== undefined) window.clearInterval(this.cloudWatchTimer);
-    if (this.settings.fullSyncFallbackEnabled) {
+    if (this.settings.fullSyncFallbackEnabled && this.isInitialSyncCompleted()) {
       const intervalMs = Math.max(1, this.settings.syncIntervalMinutes) * 60 * 1000;
       this.syncTimer = window.setInterval(() => void this.syncNow(), intervalMs);
     }
-    if (this.settings.cloudWatchEnabled) {
+    if (this.settings.cloudWatchEnabled && this.isInitialSyncCompleted()) {
       const intervalMs = Math.max(10, this.settings.cloudWatchIntervalSeconds) * 1000;
       this.cloudWatchTimer = window.setInterval(() => void this.checkCloudForChanges(), intervalMs);
     }
   }
 
   async checkCloudForChanges() {
-    if (this.cloudWatchRunning || !this.getStoredAuth()) return;
+    if (this.cloudWatchRunning || !this.getStoredAuth() || !this.isInitialSyncCompleted()) return;
     this.cloudWatchRunning = true;
     try {
       const manifest = await this.drive.loadRemoteManifest(this.settings.remoteFolderName);
@@ -312,7 +322,7 @@ export default class GoogleDriveSyncPlugin extends Plugin {
   private registerVaultEvents() {
     const schedule = (file?: TAbstractFile) => {
       if (file?.path) this.dirtyPaths.add(file.path);
-      if (!this.settings.autoSyncEnabled || !this.getStoredAuth()) return;
+      if (!this.settings.autoSyncEnabled || !this.getStoredAuth() || !this.isInitialSyncCompleted()) return;
       if (this.debounceTimer !== undefined) window.clearTimeout(this.debounceTimer);
       const delayMs = Math.max(0, this.settings.syncDebounceSeconds) * 1000;
       this.debounceTimer = window.setTimeout(() => void this.syncNow(), delayMs);
@@ -361,6 +371,45 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 
   private async requireConnectedForDangerAction() {
     if (!this.getStoredAuth()) throw new Error("Connect Google Drive before syncing.");
+  }
+
+  isInitialSyncCompleted(): boolean {
+    return this.pluginData.initialSyncCompleted === true;
+  }
+
+  async promptForInitialSyncIfNeeded() {
+    if (!this.getStoredAuth() || this.isInitialSyncCompleted()) return;
+    const direction = await chooseInitialSyncDirection(this.app);
+    if (!direction) {
+      new Notice("First sync paused. Choose a direction in Google Drive Vault Sync settings.");
+      this.onConnectionChange?.();
+      return;
+    }
+    await this.runInitialSync(direction);
+  }
+
+  async runInitialSync(direction: InitialSyncDirection) {
+    if (!this.getStoredAuth()) {
+      new Notice("Connect Google Drive before syncing.");
+      await this.setSyncStatus({ state: "disconnected" });
+      return;
+    }
+    if (this.isInitialSyncCompleted()) {
+      new Notice("First sync is already complete on this device.");
+      return;
+    }
+    if (direction === "local-to-cloud") {
+      await this.resetCloudFromLocal();
+      return;
+    }
+    await this.resetLocalFromCloud([]);
+  }
+
+  private async markInitialSyncCompleted() {
+    if (this.pluginData.initialSyncCompleted) return;
+    await this.savePluginData({ initialSyncCompleted: true });
+    this.configureTimers();
+    this.onConnectionChange?.();
   }
 
   private async setSyncStatus(status: SyncStatus) {

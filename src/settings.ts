@@ -12,6 +12,7 @@ export class GoogleDriveSyncSettingTab extends PluginSettingTab {
     containerEl.empty();
 
     const connected = this.plugin.getStoredAuth() !== undefined;
+    const initialSyncCompleted = this.plugin.isInitialSyncCompleted();
     this.renderStatus(containerEl, connected);
 
     new Setting(containerEl)
@@ -28,7 +29,7 @@ export class GoogleDriveSyncSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName("Connected status")
       .setDesc(connected ? this.plugin.accountLabel || "Connected" : "Not connected")
-      .addButton((button) => button.setButtonText("Sync now").setDisabled(!connected).onClick(() => this.plugin.syncNow()));
+      .addButton((button) => button.setButtonText("Sync now").setDisabled(!connected || !initialSyncCompleted).onClick(() => this.plugin.syncNow()));
 
     new Setting(containerEl)
       .setName("OAuth client ID")
@@ -82,6 +83,8 @@ export class GoogleDriveSyncSettingTab extends PluginSettingTab {
           new Notice(error instanceof Error ? error.message : "Could not connect Google Drive.");
         }
       }));
+
+    this.renderFirstSync(containerEl, connected);
 
     new Setting(containerEl)
       .setName("Disconnect")
@@ -215,6 +218,7 @@ export class GoogleDriveSyncSettingTab extends PluginSettingTab {
     new Setting(containerEl).setName("Sync status").setHeading();
     const rows = [
       `State: ${status?.state ?? (connected ? "idle" : "disconnected")}`,
+      connected && !this.plugin.isInitialSyncCompleted() ? "First sync: waiting for direction" : undefined,
       `Device: ${this.plugin.settings.deviceName || "Unnamed"}`,
       `Account: ${this.plugin.accountLabel || (connected ? "Connected" : "Not connected")}`,
       status?.lastFinishedAt ? `Last sync: ${new Date(status.lastFinishedAt).toLocaleString()}` : "Last sync: never",
@@ -224,7 +228,7 @@ export class GoogleDriveSyncSettingTab extends PluginSettingTab {
     ].filter(Boolean) as string[];
     for (const row of rows) containerEl.createEl("p", { text: row, cls: "obsidian-google-sync-status-row" });
     new Setting(containerEl)
-      .addButton((button) => button.setButtonText("Sync now").setDisabled(!connected).onClick(() => this.plugin.syncNow()))
+      .addButton((button) => button.setButtonText("Sync now").setDisabled(!connected || !this.plugin.isInitialSyncCompleted()).onClick(() => this.plugin.syncNow()))
       .addButton((button) => button.setButtonText("Show command status").setDisabled(!connected).onClick(() => {
         const count = this.plugin.pluginData.appliedCommandIds?.length ?? 0;
         new Notice(`${count} remote reset command${count === 1 ? "" : "s"} applied on this device.`);
@@ -232,6 +236,37 @@ export class GoogleDriveSyncSettingTab extends PluginSettingTab {
       .addButton((button) => button.setButtonText("Clear last error").setDisabled(!status?.lastError).onClick(async () => {
         await this.plugin.savePluginData({ syncStatus: { ...(this.plugin.pluginData.syncStatus ?? { state: connected ? "idle" : "disconnected" }), lastError: undefined } });
         this.display();
+      }));
+  }
+
+  private renderFirstSync(containerEl: HTMLElement, connected: boolean) {
+    if (!connected || this.plugin.isInitialSyncCompleted()) return;
+    new Setting(containerEl).setName("First sync").setHeading();
+    containerEl.createEl("p", {
+      text: "Choose the first sync direction for this device. Automatic sync is paused until one option completes.",
+      cls: "obsidian-google-sync-status-row"
+    });
+    new Setting(containerEl)
+      .setName("Cloud to local")
+      .setDesc("Replace this local vault with the current Google Drive sync state.")
+      .addButton((button) => button.setButtonText("Use cloud").setCta().onClick(async () => {
+        try {
+          await this.plugin.runInitialSync("cloud-to-local");
+          this.display();
+        } catch (error) {
+          new Notice(error instanceof Error ? error.message : "First sync failed.");
+        }
+      }));
+    new Setting(containerEl)
+      .setName("Local to cloud")
+      .setDesc("Replace the Google Drive sync state with this local vault.")
+      .addButton((button) => button.setButtonText("Use local").setWarning().onClick(async () => {
+        try {
+          await this.plugin.runInitialSync("local-to-cloud");
+          this.display();
+        } catch (error) {
+          new Notice(error instanceof Error ? error.message : "First sync failed.");
+        }
       }));
   }
 

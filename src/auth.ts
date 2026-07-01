@@ -1,4 +1,4 @@
-import { Notice, Plugin, requestUrl } from "obsidian";
+import { Notice, Platform, Plugin, requestUrl } from "obsidian";
 import { DRIVE_SCOPE, PluginData, StoredAuth } from "./types";
 import { sleep } from "./utils";
 
@@ -55,13 +55,13 @@ export class GoogleAuth {
   async startDeviceFlow(): Promise<DeviceFlowSession> {
     const clientId = this.requireClientId();
     this.requireClientSecret();
-    const response = await requestUrl({
+    const response = await this.requestGoogle({
       url: DEVICE_ENDPOINT,
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({ client_id: clientId, scope: DRIVE_SCOPE }).toString(),
       throw: false
-    });
+    }, "oauth2.googleapis.com");
     if (response.status < 200 || response.status >= 300) {
       throw new Error(`Google device authorization failed (${response.status}).`);
     }
@@ -93,11 +93,11 @@ export class GoogleAuth {
   async getAccountLabel(): Promise<string | undefined> {
     try {
       const token = await this.getValidAccessToken();
-      const response = await requestUrl({
+      const response = await this.requestGoogle({
         url: USERINFO_ENDPOINT,
         method: "GET",
         headers: { Authorization: `Bearer ${token}` }
-      });
+      }, "www.googleapis.com");
       if (response.status >= 200 && response.status < 300) {
         const body = response.json as { email?: string; name?: string };
         return body.email ?? body.name;
@@ -117,7 +117,7 @@ export class GoogleAuth {
       if (isCancelled()) throw new Error("Google authorization cancelled.");
       await sleep(intervalMs);
       if (isCancelled()) throw new Error("Google authorization cancelled.");
-      const response = await requestUrl({
+      const response = await this.requestGoogle({
         url: TOKEN_ENDPOINT,
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -128,7 +128,7 @@ export class GoogleAuth {
           grant_type: "urn:ietf:params:oauth:grant-type:device_code"
         }).toString(),
         throw: false
-      });
+      }, "oauth2.googleapis.com");
       const body = response.json as TokenResponse;
       if (response.status >= 200 && response.status < 300 && body.access_token) {
         const auth: StoredAuth = {
@@ -161,7 +161,7 @@ export class GoogleAuth {
     }
     const clientId = this.requireClientId();
     const clientSecret = this.requireClientSecret();
-    const response = await requestUrl({
+    const response = await this.requestGoogle({
       url: TOKEN_ENDPOINT,
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -172,7 +172,7 @@ export class GoogleAuth {
         grant_type: "refresh_token"
       }).toString(),
       throw: false
-    });
+    }, "oauth2.googleapis.com");
     const body = response.json as TokenResponse;
     if (response.status >= 200 && response.status < 300 && body.access_token) {
       this.auth = {
@@ -208,5 +208,21 @@ export class GoogleAuth {
       return "This OAuth client requires a client secret. Copy the client secret from Google Cloud Console and paste it in Google Drive Vault Sync settings.";
     }
     return message;
+  }
+
+  private async requestGoogle(options: Parameters<typeof requestUrl>[0], host: string): Promise<Awaited<ReturnType<typeof requestUrl>>> {
+    try {
+      return await requestUrl(options);
+    } catch (error) {
+      throw this.formatNetworkError(error, host);
+    }
+  }
+
+  private formatNetworkError(error: unknown, host: string): Error {
+    const message = error instanceof Error ? error.message : String(error);
+    if (Platform.isMobile && /UnknownHostException|Unable to resolve host|ERR_NAME_NOT_RESOLVED/i.test(message)) {
+      return new Error(`Could not resolve ${host}. Check the mobile device internet connection, Private DNS/VPN settings, and whether Obsidian has network access, then try connecting Google Drive again.`);
+    }
+    return error instanceof Error ? error : new Error(message);
   }
 }

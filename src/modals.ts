@@ -1,6 +1,6 @@
 import { App, Modal, Notice, Setting } from "obsidian";
 import { DeviceFlowSession } from "./auth";
-import { PlannedDeletion } from "./types";
+import { InitialSyncDirection, PlannedDeletion } from "./types";
 
 export class DeviceFlowModal extends Modal {
   private timerId?: number;
@@ -151,6 +151,38 @@ export function confirmDangerAction(app: App, title: string, message: string, ct
       .addButton((button) => button.setButtonText("Cancel").onClick(() => finish(false)));
     modal.onClose = () => {
       finish(false, false);
+      modal.contentEl.empty();
+    };
+    modal.open();
+  });
+}
+
+export function chooseInitialSyncDirection(app: App): Promise<InitialSyncDirection | null> {
+  return new Promise((resolve) => {
+    const modal = new Modal(app);
+    let settled = false;
+    const finish = (value: InitialSyncDirection | null, close = true) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+      if (close) modal.close();
+    };
+    modal.titleEl.setText("Choose first sync direction");
+    modal.contentEl.createEl("p", {
+      text: "Choose how this device should create its first sync baseline. Automatic sync will stay paused until you choose."
+    });
+    new Setting(modal.contentEl)
+      .setName("Cloud to local")
+      .setDesc("Replace this local vault with the current Google Drive sync state.")
+      .addButton((button) => button.setButtonText("Use cloud").setCta().onClick(() => finish("cloud-to-local")));
+    new Setting(modal.contentEl)
+      .setName("Local to cloud")
+      .setDesc("Replace the Google Drive sync state with this local vault.")
+      .addButton((button) => button.setButtonText("Use local").setWarning().onClick(() => finish("local-to-cloud")));
+    new Setting(modal.contentEl)
+      .addButton((button) => button.setButtonText("Choose later").onClick(() => finish(null)));
+    modal.onClose = () => {
+      finish(null, false);
       modal.contentEl.empty();
     };
     modal.open();

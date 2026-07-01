@@ -1,11 +1,14 @@
 {
   "name": "google-drive-vault-sync",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Two-way Google Drive sync for vaults.",
   "main": "main.js",
   "scripts": {
     "dev": "node esbuild.config.mjs",
-    "build": "tsc --noEmit --skipLibCheck && node esbuild.config.mjs production"
+    "build": "tsc --noEmit --skipLibCheck && node esbuild.config.mjs production",
+    "release:tag": "git push && git push --tags",
+    "release:create": "gh release create v$npm_package_version main.js manifest.json styles.css --title \"v$npm_package_version\" --generate-notes",
+    "release": "npm run build && git tag v$npm_package_version && npm run release:tag && npm run release:create"
   },
   "keywords": [
     "obsidian",

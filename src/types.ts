@@ -28,6 +28,7 @@ export type StoredAuth = {
 };
 
 export type ConflictPolicy = "keep-both" | "prefer-local" | "prefer-remote";
+export type InitialSyncDirection = "cloud-to-local" | "local-to-cloud";
 
 export type SyncStatusState = "disconnected" | "idle" | "syncing" | "error";
 
@@ -108,6 +109,7 @@ export type PluginData = {
   vaultId?: string;
   deviceId?: string;
   appliedCommandIds?: string[];
+  initialSyncCompleted?: boolean;
   syncStatus?: SyncStatus;
   lastRemoteUpdatedAt?: number;
   lastRemoteCommandId?: string;
