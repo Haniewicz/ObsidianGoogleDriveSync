@@ -21,6 +21,7 @@ export default class GoogleDriveSyncPlugin extends Plugin {
   accountLabel?: string;
   onConnectionChange?: () => void;
   private statusBarEl!: HTMLElement;
+  private ribbonEl!: HTMLElement;
   private syncTimer?: number;
   private cloudWatchTimer?: number;
   private debounceTimer?: number;
@@ -67,6 +68,8 @@ export default class GoogleDriveSyncPlugin extends Plugin {
     this.statusBarEl.setAttribute("aria-label", "Google Drive Sync: click to sync");
     this.statusBarEl.setAttribute("aria-label-position", "top");
     this.statusBarEl.addEventListener("click", () => void this.syncNow(true));
+    this.updateStatusBar();
+    this.ribbonEl = this.addRibbonIcon("cloud", "Sync Google Drive", () => void this.syncNow(true));
     this.updateStatusBar();
     this.registerObsidianProtocolHandler("google-drive-vault-sync", (data) => {
       if (typeof data.payload === "string" && data.payload) {
@@ -208,7 +211,7 @@ export default class GoogleDriveSyncPlugin extends Plugin {
     try {
       this.log("Starting sync", { dirtyCount: this.dirtyPaths.size });
       this.dirtyPaths.clear();
-      const summary = await this.syncEngine.syncNow();
+      const summary = await this.syncEngine.syncNow(manual);
       if (summary) await this.recordSyncSuccess(summary);
     } catch (error) {
       new Notice(error instanceof Error ? error.message : "Google Drive sync failed.");
@@ -460,22 +463,26 @@ export default class GoogleDriveSyncPlugin extends Plugin {
   }
 
   private updateStatusBar() {
-    if (!this.statusBarEl) return;
     const state = this.pluginData.syncStatus?.state ?? (this.getStoredAuth() ? "idle" : "disconnected");
-    this.statusBarEl.empty();
     const iconName =
       state === "syncing" ? "refresh-cw" :
       state === "error" ? "alert-circle" :
       state === "disconnected" ? "cloud-off" :
       "cloud";
-    setIcon(this.statusBarEl, iconName);
-    this.statusBarEl.setAttribute(
-      "aria-label",
+    const label =
       state === "syncing" ? "Google Drive: syncing…" :
       state === "error" ? "Google Drive: sync error — click to retry" :
       state === "disconnected" ? "Google Drive: not connected" :
-      "Google Drive: click to sync"
-    );
+      "Google Drive: click to sync";
+    if (this.statusBarEl) {
+      this.statusBarEl.empty();
+      setIcon(this.statusBarEl, iconName);
+      this.statusBarEl.setAttribute("aria-label", label);
+    }
+    if (this.ribbonEl) {
+      setIcon(this.ribbonEl, iconName);
+      this.ribbonEl.setAttribute("aria-label", label);
+    }
   }
 
   private async recordSyncSuccess(summary: SyncSummary) {

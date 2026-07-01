@@ -42,9 +42,9 @@ export class SyncEngine {
     return this.running;
   }
 
-  async syncNow(): Promise<SyncSummary | undefined> {
+  async syncNow(manual = false): Promise<SyncSummary | undefined> {
     if (this.running) {
-      new Notice("Google Drive sync is already running.");
+      if (manual) new Notice("Google Drive sync is already running.");
       return;
     }
     this.running = true;
@@ -117,7 +117,7 @@ export class SyncEngine {
       await this.options.drive.saveManifest(state);
       await this.options.setIndex(index);
       showConflictNotice(counters.conflicts);
-      new Notice("Google Drive sync complete.");
+      if (manual) new Notice("Google Drive sync complete.");
       return this.summary(startedAt, counters);
     } finally {
       this.running = false;
