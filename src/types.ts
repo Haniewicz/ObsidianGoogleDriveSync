@@ -122,6 +122,8 @@ export type BackupData = {
   id: string;
   createdAt: number;
   deviceName: string;
+  /** True for backups that store independent copies of file contents instead of live synced file IDs */
+  snapshotFiles?: boolean;
   /** Only files whose hash changed compared to the previous backup / last known state */
   changedFiles: Record<string, BackupFileEntry>;
   /** Paths that were deleted in this sync */

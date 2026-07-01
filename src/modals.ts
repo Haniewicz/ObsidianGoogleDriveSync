@@ -440,6 +440,13 @@ export function showBackupRestoreModal(
       text: `Changed: ${backup.changedCount} files. Deleted: ${backup.deletedCount} files. Restoring overwrites those files with their backed-up versions.`,
       cls: "obsidian-google-sync-status-row"
     });
+    const hasSnapshotFiles = data.snapshotFiles === true || backup.folderId !== undefined;
+    if (!hasSnapshotFiles) {
+      modal.contentEl.createEl("p", {
+        text: "This is a legacy backup. It may point to the current Google Drive file instead of an independent historical copy.",
+        cls: "obsidian-google-sync-diff-meta"
+      });
+    }
 
     const changedPaths = Object.keys(data.changedFiles).sort();
     const deletedPaths = [...data.deletedPaths].sort();
@@ -480,7 +487,7 @@ export function showBackupRestoreModal(
                 const localFile = app.vault.getAbstractFileByPath(path);
                 const localText = localFile instanceof TFile ? await app.vault.read(localFile) : undefined;
                 diffEl.empty();
-                renderDiff(diffEl, backupText, localText);
+                renderDiff(diffEl, backupText, localText, hasSnapshotFiles);
               } catch (err) {
                 diffEl.setText(err instanceof Error ? err.message : "Failed to load diff.");
               }
@@ -521,7 +528,7 @@ function isLikelyTextPath(path: string): boolean {
   return ["md", "txt", "json", "yaml", "yml", "csv", "css", "js", "ts", "html", "xml", "canvas"].includes(ext);
 }
 
-function renderDiff(container: HTMLElement, backupText: string, localText?: string) {
+function renderDiff(container: HTMLElement, backupText: string, localText?: string, hasSnapshotFiles = true) {
   container.createEl("p", {
     text: localText === undefined
       ? "Backed-up version compared with a missing local file."
@@ -540,7 +547,12 @@ function renderDiff(container: HTMLElement, backupText: string, localText?: stri
   }
 
   if (backupText === localText) {
-    pre.createEl("span", { text: "(no text difference between backup and current local file)", cls: "obsidian-google-sync-diff-meta" });
+    pre.createEl("span", {
+      text: hasSnapshotFiles
+        ? "(no text difference between backup snapshot and current local file)"
+        : "(legacy backup points to the same text as the current local file; historical text may not be available)",
+      cls: "obsidian-google-sync-diff-meta"
+    });
     return;
   }
 

@@ -129,7 +129,7 @@ export class GoogleDriveClient {
       };
     }
 
-    const backupData: BackupData = { v: 1, id, createdAt, deviceName, changedFiles, deletedPaths };
+    const backupData: BackupData = { v: 1, id, createdAt, deviceName, snapshotFiles: true, changedFiles, deletedPaths };
     const created = await this.createFile(name, backupFolderId, JSON.stringify(backupData, null, 2), "application/json");
 
     const meta: BackupMeta = {
