@@ -1,5 +1,9 @@
 import { Platform, requestUrl, RequestUrlParam, RequestUrlResponse } from "obsidian";
 
+const FETCH_TIMEOUT_MS = 15000;
+const REQUEST_RETRY_COUNT = 3;
+const REQUEST_RETRY_DELAY_MS = 1000;
+
 export class FetchFallbackError extends Error {
   constructor(readonly primaryError: unknown, readonly fallbackError: unknown) {
     super(`Obsidian requestUrl failed: ${formatRequestError(primaryError)}; fetch fallback failed: ${formatRequestError(fallbackError)}`);
@@ -7,16 +11,29 @@ export class FetchFallbackError extends Error {
 }
 
 export async function requestGoogleUrl(options: RequestUrlParam): Promise<RequestUrlResponse> {
-  try {
-    return await requestUrl(options);
-  } catch (error) {
-    if (!shouldUseFetchFallback(error)) throw error;
+  let lastError: unknown;
+  for (let attempt = 0; attempt < REQUEST_RETRY_COUNT; attempt++) {
+    if (attempt > 0) {
+      await new Promise(resolve => setTimeout(resolve, REQUEST_RETRY_DELAY_MS * attempt));
+    }
     try {
-      return await fetchRequestUrl(options);
-    } catch (fallbackError) {
-      throw new FetchFallbackError(error, fallbackError);
+      return await requestUrl(options);
+    } catch (error) {
+      lastError = error;
+      if (!shouldUseFetchFallback(error)) {
+        if (isDnsResolutionError(error) && attempt < REQUEST_RETRY_COUNT - 1) continue;
+        throw error;
+      }
+      try {
+        return await fetchRequestUrl(options);
+      } catch (fallbackError) {
+        lastError = new FetchFallbackError(error, fallbackError);
+        if (attempt < REQUEST_RETRY_COUNT - 1) continue;
+        throw lastError;
+      }
     }
   }
+  throw lastError;
 }
 
 export function formatRequestError(error: unknown): string {
@@ -24,7 +41,7 @@ export function formatRequestError(error: unknown): string {
 }
 
 export function isDnsResolutionError(error: unknown): boolean {
-  if (error instanceof FetchFallbackError) return false;
+  if (error instanceof FetchFallbackError) return isDnsResolutionError(error.primaryError);
   return /UnknownHostException|Unable to resolve host|ERR_NAME_NOT_RESOLVED/i.test(formatRequestError(error));
 }
 
@@ -33,11 +50,19 @@ function shouldUseFetchFallback(error: unknown): boolean {
 }
 
 async function fetchRequestUrl(options: RequestUrlParam): Promise<RequestUrlResponse> {
-  const response = await fetch(options.url, {
-    method: options.method ?? "GET",
-    headers: buildFetchHeaders(options),
-    body: options.body
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  let response: Response;
+  try {
+    response = await fetch(options.url, {
+      method: options.method ?? "GET",
+      headers: buildFetchHeaders(options),
+      body: options.body,
+      signal: controller.signal
+    });
+  } finally {
+    clearTimeout(timeoutId);
+  }
 
   const arrayBuffer = await response.arrayBuffer();
   const headers = readFetchHeaders(response.headers);
