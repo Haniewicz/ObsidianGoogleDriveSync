@@ -1,6 +1,7 @@
-import { App, Modal, Notice, Setting } from "obsidian";
+import { App, Modal, Notice, Platform, Setting } from "obsidian";
 import { DeviceFlowSession } from "./auth";
-import { InitialSyncDirection, PlannedDeletion } from "./types";
+import { AuthTransferPayload, buildTransferUrl, decryptAuth, encryptAuth, generateQRCodeSvg } from "./authTransfer";
+import { InitialSyncDirection, PlannedDeletion, StoredAuth } from "./types";
 
 export class DeviceFlowModal extends Modal {
   private timerId?: number;
@@ -236,4 +237,176 @@ export function showConflictNotice(count: number) {
 
 function key(deletion: PlannedDeletion): string {
   return `${deletion.direction}:${deletion.path}`;
+}
+
+// ---------------------------------------------------------------------------
+// Auth Transfer – Export (desktop only)
+// ---------------------------------------------------------------------------
+
+export class AuthExportModal extends Modal {
+  private usePassword = false;
+  private password = "";
+  private confirmPassword = "";
+  private qrEl!: HTMLElement;
+  private errorEl!: HTMLElement;
+  private generateBtn!: HTMLButtonElement;
+
+  constructor(app: App, private auth: StoredAuth) {
+    super(app);
+  }
+
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.createEl("h2", { text: "Transfer Google auth to another device" });
+    contentEl.createEl("p", {
+      text: "Scan the QR code in Obsidian on another device. The code contains your Google OAuth tokens — treat it like a password.",
+      cls: "obsidian-google-sync-status-row"
+    });
+
+    new Setting(contentEl)
+      .setName("Protect with password")
+      .setDesc("Encrypt the QR code payload so only someone with the password can use it.")
+      .addToggle((toggle) => toggle.setValue(false).onChange((value) => {
+        this.usePassword = value;
+        passwordSetting.settingEl.style.display = value ? "" : "none";
+        confirmSetting.settingEl.style.display = value ? "" : "none";
+        this.qrEl.empty();
+        this.errorEl.setText("");
+      }));
+
+    const passwordSetting = new Setting(contentEl)
+      .setName("Password")
+      .addText((text) => {
+        text.inputEl.type = "password";
+        text.setPlaceholder("Enter password").onChange((value) => { this.password = value; });
+      });
+    passwordSetting.settingEl.style.display = "none";
+
+    const confirmSetting = new Setting(contentEl)
+      .setName("Confirm password")
+      .addText((text) => {
+        text.inputEl.type = "password";
+        text.setPlaceholder("Repeat password").onChange((value) => { this.confirmPassword = value; });
+      });
+    confirmSetting.settingEl.style.display = "none";
+
+    this.errorEl = contentEl.createEl("p", { cls: "obsidian-google-sync-transfer-error" });
+
+    new Setting(contentEl).addButton((button) => {
+      this.generateBtn = button.buttonEl;
+      button.setButtonText("Generate QR code").setCta().onClick(() => void this.generate());
+    });
+
+    this.qrEl = contentEl.createDiv("obsidian-google-sync-qr-container");
+  }
+
+  private async generate() {
+    this.errorEl.setText("");
+    if (this.usePassword) {
+      if (!this.password) {
+        this.errorEl.setText("Enter a password.");
+        return;
+      }
+      if (this.password !== this.confirmPassword) {
+        this.errorEl.setText("Passwords do not match.");
+        return;
+      }
+    }
+    this.generateBtn.disabled = true;
+    this.generateBtn.textContent = "Generating…";
+    try {
+      let payload: AuthTransferPayload;
+      if (this.usePassword) {
+        payload = await encryptAuth(this.auth, this.password);
+      } else {
+        payload = { v: 1, encrypted: false, auth: this.auth };
+      }
+      const url = buildTransferUrl(payload);
+      const svg = await generateQRCodeSvg(url);
+      this.qrEl.empty();
+      this.qrEl.innerHTML = svg;
+      this.qrEl.createEl("p", {
+        text: this.usePassword
+          ? "Scan this QR code in Obsidian on the target device. You will be asked for the password."
+          : "⚠ Unencrypted — scan quickly and do not share. Treat it like a password.",
+        cls: "obsidian-google-sync-status-row"
+      });
+    } catch (error) {
+      this.errorEl.setText(error instanceof Error ? error.message : "Failed to generate QR code.");
+    } finally {
+      this.generateBtn.disabled = false;
+      this.generateBtn.textContent = "Generate QR code";
+    }
+  }
+
+  onClose() {
+    this.contentEl.empty();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Auth Transfer – Import (triggered by deep link on receiving device)
+// ---------------------------------------------------------------------------
+
+export function showAuthImportModal(app: App, payload: AuthTransferPayload): Promise<StoredAuth | null> {
+  return new Promise((resolve) => {
+    const modal = new Modal(app);
+    let settled = false;
+    const finish = (value: StoredAuth | null, close = true) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+      if (close) modal.close();
+    };
+
+    modal.titleEl.setText("Import Google Drive credentials");
+
+    if (!payload.encrypted) {
+      modal.contentEl.createEl("p", {
+        text: "A QR code from another device contains Google Drive credentials. Import them to connect Google Drive on this device.",
+        cls: "obsidian-google-sync-status-row"
+      });
+      new Setting(modal.contentEl)
+        .addButton((btn) => btn.setButtonText("Import").setCta().onClick(() => finish(payload.auth)))
+        .addButton((btn) => btn.setButtonText("Cancel").onClick(() => finish(null)));
+    } else {
+      modal.contentEl.createEl("p", {
+        text: "The QR code is password-protected. Enter the password to decrypt and import the credentials.",
+        cls: "obsidian-google-sync-status-row"
+      });
+      let password = "";
+      const errorEl = modal.contentEl.createEl("p", { cls: "obsidian-google-sync-transfer-error" });
+      new Setting(modal.contentEl)
+        .setName("Password")
+        .addText((text) => {
+          text.inputEl.type = "password";
+          text.setPlaceholder("Enter password").onChange((value) => { password = value; });
+          text.inputEl.addEventListener("keydown", (e) => { if (e.key === "Enter") importBtn.click(); });
+        });
+      let importBtn!: HTMLButtonElement;
+      new Setting(modal.contentEl)
+        .addButton((btn) => {
+          importBtn = btn.buttonEl;
+          btn.setButtonText("Import").setCta().onClick(async () => {
+            errorEl.setText("");
+            if (!password) { errorEl.setText("Enter the password."); return; }
+            importBtn.disabled = true;
+            importBtn.textContent = "Decrypting…";
+            try {
+              const auth = await decryptAuth(payload, password);
+              finish(auth);
+            } catch (error) {
+              errorEl.setText(error instanceof Error ? error.message : "Decryption failed.");
+              importBtn.disabled = false;
+              importBtn.textContent = "Import";
+            }
+          });
+        })
+        .addButton((btn) => btn.setButtonText("Cancel").onClick(() => finish(null)));
+    }
+
+    modal.onClose = () => { finish(null, false); modal.contentEl.empty(); };
+    modal.open();
+  });
 }

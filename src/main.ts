@@ -1,7 +1,8 @@
 import { Notice, Platform, Plugin, TAbstractFile } from "obsidian";
 import { GoogleAuth } from "./auth";
+import { decodeTransferPayload } from "./authTransfer";
 import { GoogleDriveClient } from "./drive";
-import { DeviceFlowModal, chooseInitialSyncDirection, chooseLocalFilesToKeep, confirmDangerAction, confirmResetIndex } from "./modals";
+import { AuthExportModal, DeviceFlowModal, chooseInitialSyncDirection, chooseLocalFilesToKeep, confirmDangerAction, confirmResetIndex, showAuthImportModal } from "./modals";
 import { RequestQueue } from "./queue";
 import { LocalVaultScanner } from "./scanner";
 import { GoogleDriveSyncSettingTab } from "./settings";
@@ -60,6 +61,11 @@ export default class GoogleDriveSyncPlugin extends Plugin {
     this.addSettingTab(new GoogleDriveSyncSettingTab(this));
     this.registerCommands();
     this.registerVaultEvents();
+    this.registerObsidianProtocolHandler("google-drive-vault-sync", (data) => {
+      if (data.action === "import-auth" && typeof data.payload === "string") {
+        void this.handleAuthImport(data.payload);
+      }
+    });
     this.configureTimers();
     void this.refreshAccountLabel();
 
@@ -143,6 +149,34 @@ export default class GoogleDriveSyncPlugin extends Plugin {
     await this.setSyncStatus({ state: "disconnected" });
     this.onConnectionChange?.();
   }
+
+  showAuthExportModal() {
+    const auth = this.getStoredAuth();
+    if (!auth) {
+      new Notice("Connect Google Drive first.");
+      return;
+    }
+    new AuthExportModal(this.app, auth).open();
+  }
+
+  async handleAuthImport(rawPayload: string) {
+    let payload;
+    try {
+      payload = decodeTransferPayload(rawPayload);
+    } catch {
+      new Notice("Invalid QR code payload.");
+      return;
+    }
+    const auth = await showAuthImportModal(this.app, payload);
+    if (!auth) return;
+    this.auth.setAuth(auth);
+    await this.savePluginData({ auth });
+    await this.refreshAccountLabel();
+    new Notice("Google Drive credentials imported successfully.");
+    this.onConnectionChange?.();
+    await this.promptForInitialSyncIfNeeded();
+  }
+
 
   async markDisconnected() {
     this.pluginData.auth = undefined;

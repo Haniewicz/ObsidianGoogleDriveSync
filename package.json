@@ -1,6 +1,6 @@
 {
   "name": "google-drive-vault-sync",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "description": "Two-way Google Drive sync for vaults.",
   "main": "main.js",
   "scripts": {
@@ -19,8 +19,12 @@
   "license": "MIT",
   "devDependencies": {
     "@types/node": "^20.11.30",
+    "@types/qrcode": "^1.5.6",
     "esbuild": "^0.21.5",
     "obsidian": "^1.5.12",
     "typescript": "^5.4.5"
+  },
+  "dependencies": {
+    "qrcode": "^1.5.4"
   }
 }

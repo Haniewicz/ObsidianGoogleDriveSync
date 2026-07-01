@@ -1,4 +1,4 @@
-import { Notice, PluginSettingTab, Setting } from "obsidian";
+import { Notice, Platform, PluginSettingTab, Setting } from "obsidian";
 import { runGoogleNetworkDiagnostics } from "./auth";
 import GoogleDriveSyncPlugin from "./main";
 
@@ -95,6 +95,15 @@ export class GoogleDriveSyncSettingTab extends PluginSettingTab {
         await this.plugin.disconnectGoogleDrive();
         this.display();
       }));
+
+    if (Platform.isDesktop && connected) {
+      new Setting(containerEl)
+        .setName("Transfer to another device")
+        .setDesc("Generate a QR code to import Google Drive credentials on a phone or tablet that can't complete OAuth due to network issues.")
+        .addButton((button) => button.setButtonText("Show QR code").onClick(() => {
+          this.plugin.showAuthExportModal();
+        }));
+    }
 
     new Setting(containerEl)
       .setName("Remote folder name")
