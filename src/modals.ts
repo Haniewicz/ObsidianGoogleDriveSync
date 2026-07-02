@@ -1,6 +1,6 @@
-import { App, Modal, Notice, Platform, Setting, TFile } from "obsidian";
+import { App, Modal, Notice, Setting, TFile } from "obsidian";
 import { DeviceFlowSession } from "./auth";
-import { AuthTransferPayload, buildTransferUrl, decryptAuth, encryptAuth, generateQRCodeSvg } from "./authTransfer";
+import { AuthTransferPayload, buildTransferUrl, decryptAuth, encryptAuth, generateQRCodeDataUrl } from "./authTransfer";
 import { BackupData, BackupMeta, InitialSyncDirection, PlannedDeletion, StoredAuth } from "./types";
 
 export class DeviceFlowModal extends Modal {
@@ -269,8 +269,8 @@ export class AuthExportModal extends Modal {
       .setDesc("Encrypt the QR code payload so only someone with the password can use it.")
       .addToggle((toggle) => toggle.setValue(false).onChange((value) => {
         this.usePassword = value;
-        passwordSetting.settingEl.style.display = value ? "" : "none";
-        confirmSetting.settingEl.style.display = value ? "" : "none";
+        passwordSetting.settingEl.toggleClass("obsidian-google-sync-hidden", !value);
+        confirmSetting.settingEl.toggleClass("obsidian-google-sync-hidden", !value);
         this.qrEl.empty();
         this.errorEl.setText("");
       }));
@@ -281,7 +281,7 @@ export class AuthExportModal extends Modal {
         text.inputEl.type = "password";
         text.setPlaceholder("Enter password").onChange((value) => { this.password = value; });
       });
-    passwordSetting.settingEl.style.display = "none";
+    passwordSetting.settingEl.addClass("obsidian-google-sync-hidden");
 
     const confirmSetting = new Setting(contentEl)
       .setName("Confirm password")
@@ -289,7 +289,7 @@ export class AuthExportModal extends Modal {
         text.inputEl.type = "password";
         text.setPlaceholder("Repeat password").onChange((value) => { this.confirmPassword = value; });
       });
-    confirmSetting.settingEl.style.display = "none";
+    confirmSetting.settingEl.addClass("obsidian-google-sync-hidden");
 
     this.errorEl = contentEl.createEl("p", { cls: "obsidian-google-sync-transfer-error" });
 
@@ -323,9 +323,15 @@ export class AuthExportModal extends Modal {
         payload = { v: 1, encrypted: false, auth: this.auth };
       }
       const url = buildTransferUrl(payload);
-      const svg = await generateQRCodeSvg(url);
+      const qrDataUrl = await generateQRCodeDataUrl(url);
       this.qrEl.empty();
-      this.qrEl.innerHTML = svg;
+      this.qrEl.createEl("img", {
+        attr: {
+          alt: "Google auth transfer QR code",
+          src: qrDataUrl
+        },
+        cls: "obsidian-google-sync-qr"
+      });
       this.qrEl.createEl("p", {
         text: this.usePassword
           ? "Scan this QR code in Obsidian on the target device. You will be asked for the password."
@@ -455,7 +461,7 @@ export function showBackupRestoreModal(
     const allPaths = [...changedPaths, ...deletedPaths];
 
     const search = modal.contentEl.createEl("input", { type: "search", placeholder: "Search files" });
-    search.style.cssText = "width:100%;margin:0.5rem 0;";
+    search.addClass("obsidian-google-sync-search");
     const listEl = modal.contentEl.createDiv("google-drive-sync-deletion-list");
 
     const renderList = () => {
@@ -465,19 +471,22 @@ export function showBackupRestoreModal(
         const isDeleted = deletedPaths.includes(path);
         const row = listEl.createDiv("obsidian-google-sync-backup-row");
         const header = row.createDiv("obsidian-google-sync-backup-row-header");
-        const label = header.createEl("span", {
+        header.createEl("span", {
           text: (isDeleted ? "✕ " : "~ ") + path,
-          cls: "obsidian-google-sync-status-row"
+          cls: [
+            "obsidian-google-sync-status-row",
+            isDeleted ? "obsidian-google-sync-path-deleted" : "obsidian-google-sync-path-changed"
+          ]
         });
-        label.style.color = isDeleted ? "var(--text-error)" : "var(--text-muted)";
 
         if (!isDeleted && isLikelyTextPath(path)) {
           const toggle = header.createEl("button", { text: "Show diff" });
           toggle.className = "obsidian-google-sync-diff-btn";
           const diffEl = row.createDiv("obsidian-google-sync-diff");
-          diffEl.style.display = "none";
+          diffEl.addClass("obsidian-google-sync-hidden");
           let loaded = false;
-          toggle.addEventListener("click", async () => {
+          toggle.addEventListener("click", () => {
+            void (async () => {
             if (!loaded) {
               loaded = true;
               toggle.textContent = "Loading…";
@@ -495,12 +504,13 @@ export function showBackupRestoreModal(
               }
               toggle.textContent = "Hide diff";
               toggle.disabled = false;
-              diffEl.style.display = "";
+              diffEl.removeClass("obsidian-google-sync-hidden");
             } else {
-              const visible = diffEl.style.display !== "none";
-              diffEl.style.display = visible ? "none" : "";
+              const visible = !diffEl.hasClass("obsidian-google-sync-hidden");
+              diffEl.toggleClass("obsidian-google-sync-hidden", visible);
               toggle.textContent = visible ? "Show diff" : "Hide diff";
             }
+            })();
           });
         }
 
@@ -659,7 +669,7 @@ function computeLcs(a: string[], b: string[]): [number, number][] {
   if (m === 0 || n === 0) return [];
   // Cap to avoid O(mn) on huge files
   if (m * n > 40000) return [];
-  const dp: number[][] = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  const dp: number[][] = Array.from({ length: m + 1 }, (): number[] => Array<number>(n + 1).fill(0));
   for (let i = 1; i <= m; i++) {
     for (let j = 1; j <= n; j++) {
       dp[i][j] = a[i - 1] === b[j - 1] ? dp[i - 1][j - 1] + 1 : Math.max(dp[i - 1][j], dp[i][j - 1]);

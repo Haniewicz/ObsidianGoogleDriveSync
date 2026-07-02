@@ -51,6 +51,20 @@
 .obsidian-google-sync-diff-add    { color: var(--color-green); }
 .obsidian-google-sync-diff-ctx    { color: var(--text-muted); }
 .obsidian-google-sync-diff-meta   { color: var(--text-faint); font-style: italic; }
+.obsidian-google-sync-hidden      { display: none; }
+.obsidian-google-sync-path-deleted { color: var(--text-error); }
+.obsidian-google-sync-path-changed { color: var(--text-muted); }
+
+.obsidian-google-sync-search {
+  margin: 0.5rem 0;
+  width: 100%;
+}
+
+.obsidian-google-sync-qr {
+  display: block;
+  height: auto;
+  max-width: 100%;
+}
 
 .obsidian-google-sync-status-bar {
   cursor: pointer;
