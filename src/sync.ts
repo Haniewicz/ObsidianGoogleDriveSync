@@ -624,15 +624,19 @@ export class SyncEngine {
       await this.downloadRemote(path, remoteMeta, index, counters, localManifest);
       return true;
     }
+    const canTryTextMerge = localMeta.isText && isLikelyText(path) && localMeta.size <= MAX_SNAPSHOT_BYTES && remoteData.byteLength <= MAX_SNAPSHOT_BYTES;
     if (!allowManualResolution) {
+      if (canTryTextMerge) {
+        const merged = await this.tryAutoMergeConflict(path, localMeta, remoteFile, filesFolderId, manifest, index, counters, backupFiles, localManifest);
+        if (merged) return true;
+      }
       await this.log("sync-engine-conflict-auto-keep-both", { path });
       await this.keepBothConflict(path, localMeta, remoteMeta, remoteFile, filesFolderId, manifest, index, counters, localManifest);
       return true;
     }
     await this.captureConflictBackup(path, localMeta, remoteMeta, remoteData);
     await this.log("sync-engine-conflict-diagnostic-backup-created", { path });
-    const isText = localMeta.isText && isLikelyText(path) && localMeta.size <= MAX_SNAPSHOT_BYTES && remoteData.byteLength <= MAX_SNAPSHOT_BYTES;
-    if (isText) {
+    if (canTryTextMerge) {
       const localText = await this.options.scanner.readText(path);
       const remoteText = typeof remoteFile.content === "string" ? remoteFile.content : new TextDecoder().decode(remoteData);
       const baseText = index[path]?.baseSnapshot;
@@ -683,6 +687,46 @@ export class SyncEngine {
     }
     await this.log("sync-engine-conflict-keep-both-binary", { path });
     await this.keepBothConflict(path, localMeta, remoteMeta, remoteFile, filesFolderId, manifest, index, counters, localManifest);
+    return true;
+  }
+
+  private async tryAutoMergeConflict(
+    path: string,
+    localMeta: LocalFileMeta,
+    remoteFile: RemoteFile,
+    filesFolderId: string,
+    manifest: RemoteManifest,
+    index: Record<string, SyncIndexEntry>,
+    counters: SyncCounters,
+    backupFiles?: Record<string, BackupFileSource>,
+    localManifest?: LocalSyncManifest
+  ): Promise<boolean> {
+    const baseText = index[path]?.baseSnapshot;
+    if (baseText === undefined) {
+      await this.log("sync-engine-conflict-auto-merge-skipped", { path, reason: "missing-base-snapshot" });
+      return false;
+    }
+    const localText = await this.options.scanner.readText(path);
+    const remoteText = typeof remoteFile.content === "string" ? remoteFile.content : new TextDecoder().decode(remoteFile.content);
+    const merged = this.mergeEngine.merge(path, baseText, localText, remoteText);
+    if (merged.status === "conflict") {
+      await this.log("sync-engine-conflict-auto-merge-conflict", { path, reason: merged.reason });
+      return false;
+    }
+    const mergedText = merged.status === "no-changes" ? localText : merged.content;
+    if (backupFiles) await this.captureLocalBackup(backupFiles, path, localMeta);
+    await writeVaultFile(this.options.app.vault, path, mergedText);
+    const hash = await sha256Hex(mergedText);
+    const localMerged: LocalFileMeta = {
+      path,
+      hash,
+      size: byteSize(mergedText),
+      extension: getExtension(path),
+      mtime: Date.now(),
+      isText: true
+    };
+    await this.log("sync-engine-conflict-auto-merged", { path, status: merged.status });
+    await this.uploadLocal(path, localMerged, filesFolderId, manifest, index, counters, localManifest);
     return true;
   }
 
