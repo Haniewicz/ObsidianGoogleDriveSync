@@ -229,6 +229,26 @@ export class GoogleDriveClient {
     return this.createFile(name, parentId, content, mimeType);
   }
 
+  async renameVaultFile(fileId: string, newPath: string, filesFolderId: string): Promise<DriveFile> {
+    const parentId = await this.ensureFolderPath(newPath.split("/").slice(0, -1), filesFolderId);
+    const name = newPath.split("/").pop() || newPath;
+    const current = await this.requestJson<DriveFile>(
+      `${DRIVE_API}/files/${encodeURIComponent(fileId)}?fields=id,name,parents`,
+      "GET"
+    );
+    const removeParents = (current.parents ?? []).filter((id) => id !== parentId).join(",");
+    const query = encodeQuery({
+      fields: "id,name,modifiedTime,size,headRevisionId,parents",
+      addParents: parentId,
+      removeParents: removeParents || undefined
+    });
+    return this.requestJson<DriveFile>(
+      `${DRIVE_API}/files/${encodeURIComponent(fileId)}?${query}`,
+      "PATCH",
+      { name }
+    );
+  }
+
   async trashFile(fileId: string): Promise<void> {
     await this.requestJson(`${DRIVE_API}/files/${encodeURIComponent(fileId)}?fields=id,trashed`, "PATCH", { trashed: true });
   }

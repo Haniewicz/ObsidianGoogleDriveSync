@@ -98,6 +98,31 @@ export class GoogleDriveProvider implements SyncProvider {
     };
   }
 
+  async rename(oldPath: string, newPath: string): Promise<void> {
+    const state = this.getState();
+    const remote = state.manifest.files[oldPath];
+    if (!remote || remote.deleted) throw new Error(`Remote file not found: ${oldPath}`);
+    const renamed = await this.drive.renameVaultFile(remote.driveFileId, newPath, state.filesFolderId);
+    state.manifest.files[newPath] = {
+      ...remote,
+      path: newPath,
+      driveFileId: renamed.id,
+      revision: renamed.headRevisionId ?? remote.revision,
+      updatedAt: Date.now(),
+      deviceId: this.getDeviceId(),
+      deviceName: this.getDeviceName(),
+      deleted: false
+    };
+    state.manifest.files[oldPath] = {
+      ...remote,
+      deleted: true,
+      deletedAt: Date.now(),
+      updatedAt: Date.now(),
+      deviceId: this.getDeviceId(),
+      deviceName: this.getDeviceName()
+    };
+  }
+
   async getMetadata(path: string): Promise<RemoteMetadata | null> {
     const file = this.getState().manifest.files[path];
     if (!file) return null;

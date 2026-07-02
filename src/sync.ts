@@ -78,8 +78,9 @@ export class SyncEngine {
       const captureRoutineBackups = this.shouldCaptureRoutineBackups(state.manifest);
       const index = { ...this.options.getIndex() };
       const localManifest = this.currentLocalManifest(index);
+      await this.applyLocalRenames(local, state.manifest, index, localManifest, counters);
       const paths = unique([...Object.keys(local), ...remoteChanges.map((change) => change.path), ...Object.keys(index), ...Object.keys(localManifest.records)]);
-      const deletionPlan = this.planDeletions(paths, local, state.manifest, index);
+      const deletionPlan = this.planDeletions(paths, local, state.manifest, index, localManifest);
       const allowedDeletions = await this.reviewLargeDeletionPlan(deletionPlan, Object.keys(index).length);
       if (allowedDeletions === null) {
         new Notice("Google Drive sync cancelled.");
@@ -459,13 +460,14 @@ export class SyncEngine {
     paths: string[],
     local: Record<string, LocalFileMeta>,
     manifest: RemoteManifest,
-    index: Record<string, SyncIndexEntry>
+    index: Record<string, SyncIndexEntry>,
+    localManifest: LocalSyncManifest
   ): PlannedDeletion[] {
     const plan: PlannedDeletion[] = [];
     for (const path of paths) {
       const localMeta = local[path];
       const remoteMeta = manifest.files[path];
-      const lastHash = index[path]?.lastSyncedHash;
+      const lastHash = localManifest.records[path]?.lastKnownRemoteHash ?? index[path]?.lastSyncedHash;
       if (!localMeta && remoteMeta && !remoteMeta.deleted && remoteMeta.hash === lastHash) {
         plan.push({ path, direction: "remote" });
       }
@@ -478,11 +480,48 @@ export class SyncEngine {
 
   private async reviewLargeDeletionPlan(plan: PlannedDeletion[], knownSyncedCount: number): Promise<PlannedDeletion[] | null> {
     if (plan.length === 0) return [];
+    if (plan.length <= 5) return plan;
     const percent = knownSyncedCount === 0 ? 0 : (plan.length / knownSyncedCount) * 100;
     if (percent <= this.options.getMaxDeletionPercent()) return plan;
     return new Promise((resolve) => {
       new LargeDeletionModal(this.options.app, plan, percent, resolve).open();
     });
+  }
+
+  private async applyLocalRenames(
+    local: Record<string, LocalFileMeta>,
+    manifest: RemoteManifest,
+    index: Record<string, SyncIndexEntry>,
+    localManifest: LocalSyncManifest,
+    counters: SyncCounters
+  ): Promise<void> {
+    const missingRemoteByHash = new Map<string, RemoteFileMeta[]>();
+    for (const [oldPath, remote] of Object.entries(manifest.files)) {
+      if (local[oldPath] || remote.deleted) continue;
+      const oldIndex = index[oldPath];
+      const record = localManifest.records[oldPath];
+      const baseHash = record?.lastKnownRemoteHash ?? oldIndex?.lastSyncedHash ?? null;
+      if (baseHash !== remote.hash) continue;
+      const bucket = missingRemoteByHash.get(remote.hash) ?? [];
+      bucket.push(remote);
+      missingRemoteByHash.set(remote.hash, bucket);
+    }
+
+    for (const [newPath, localMeta] of Object.entries(local)) {
+      if (manifest.files[newPath] && !manifest.files[newPath].deleted) continue;
+      const candidates = missingRemoteByHash.get(localMeta.hash);
+      if (!candidates || candidates.length !== 1) continue;
+      const oldRemote = candidates[0];
+      const oldPath = oldRemote.path;
+      await this.options.provider.rename(oldPath, newPath);
+      const renamedRemote = manifest.files[newPath];
+      index[newPath] = await this.indexEntry(newPath, localMeta.hash, renamedRemote.driveFileId, renamedRemote.revision, await this.options.scanner.read(newPath, !localMeta.isText), localMeta.isText);
+      index[oldPath] = { ...(index[oldPath] ?? this.emptyEntry(oldPath)), deleted: true, lastSyncedAt: Date.now() };
+      updateRecordFromSync(localManifest.records, newPath, localMeta, renamedRemote, this.options.getDeviceId(), false);
+      updateRecordFromSync(localManifest.records, oldPath, undefined, manifest.files[oldPath], this.options.getDeviceId(), true);
+      candidates.pop();
+      counters.uploads += 1;
+    }
   }
 
   private async uploadLocal(
