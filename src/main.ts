@@ -105,13 +105,14 @@ export default class GoogleDriveSyncPlugin extends Plugin {
         void this.handleAuthImport(data.payload);
       }
     });
-    this.configureTimers();
     void this.refreshAccountLabel();
 
     if (this.settings.syncOnStartup && this.getStoredAuth() && this.isInitialSyncCompleted()) {
       window.setTimeout(() => void this.safeStartupSync(), 2500);
     } else {
       this.normalUploadUnlocked = true;
+      await this.rememberCurrentRemoteMarkers();
+      this.configureTimers();
     }
   }
 
@@ -314,9 +315,11 @@ export default class GoogleDriveSyncPlugin extends Plugin {
     this.normalUploadUnlocked = false;
     try {
       await this.syncNow(false);
+      await this.rememberCurrentRemoteMarkers();
       this.normalUploadUnlocked = true;
     } finally {
       this.startupSyncRunning = false;
+      this.configureTimers();
     }
   }
 
@@ -408,7 +411,15 @@ export default class GoogleDriveSyncPlugin extends Plugin {
   }
 
   async checkCloudForChanges() {
-    if (this.cloudWatchRunning || this.syncRunning || this.syncEngine.isRunning() || !this.getStoredAuth() || !this.isInitialSyncCompleted()) return;
+    if (
+      this.cloudWatchRunning ||
+      this.startupSyncRunning ||
+      this.syncRunning ||
+      this.syncEngine.isRunning() ||
+      !this.normalUploadUnlocked ||
+      !this.getStoredAuth() ||
+      !this.isInitialSyncCompleted()
+    ) return;
     this.cloudWatchRunning = true;
     try {
       const manifest = await this.drive.loadRemoteManifest(this.settings.remoteFolderName);
@@ -503,9 +514,11 @@ export default class GoogleDriveSyncPlugin extends Plugin {
   }
 
   private shouldIgnoreVaultEvent(path?: string): boolean {
-    if (!path) return Date.now() < this.ignoreVaultEventsUntil;
+    if (!path) return this.syncRunning || this.startupSyncRunning || Date.now() < this.ignoreVaultEventsUntil;
     const ignored = ignoredPatternsFromSettings(this.settings.ignoredPaths);
-    return Date.now() < this.ignoreVaultEventsUntil
+    return this.syncRunning
+      || this.startupSyncRunning
+      || Date.now() < this.ignoreVaultEventsUntil
       || path.startsWith(".sync/")
       || path.startsWith(".trash/")
       || path.startsWith(`${this.app.vault.configDir}/plugins/google-drive-vault-sync/`)
