@@ -6,7 +6,7 @@ import { OfflineSyncQueue } from "./offlineQueue";
 import { GoogleDriveProvider } from "./provider";
 import { LocalVaultScanner } from "./scanner";
 import { BackupFileSource, BackupMode, ConflictPolicy, LocalFile, LocalFileMeta, LocalSyncManifest, PlannedDeletion, RemoteFileMeta, RemoteManifest, RemoteSyncCommand, SyncIndexEntry, SyncQueueItem, SyncSummary } from "./types";
-import { byteSize, deletedCopyPath, isLikelyText, safeCollisionPath, sha256Hex, unique, writeVaultFile } from "./utils";
+import { byteSize, conflictPath, deletedCopyPath, getExtension, isLikelyText, safeCollisionPath, sha256Hex, unique, writeVaultFile } from "./utils";
 import { LargeDeletionModal, showConflictNotice, showManualConflictModal } from "./modals";
 
 const MAX_SNAPSHOT_BYTES = 1024 * 1024;
@@ -628,6 +628,21 @@ export class SyncEngine {
       }
       if (choice === "keep-remote") {
         await this.downloadRemote(path, remoteMeta, index, counters, localManifest);
+        return true;
+      }
+      if (choice === "keep-both") {
+        const copyPath = conflictPath(path, remoteMeta.deviceName ?? "Google Drive");
+        await writeVaultFile(this.options.app.vault, copyPath, remoteText);
+        const copyMeta: LocalFileMeta = {
+          path: copyPath,
+          hash: await sha256Hex(remoteText),
+          size: byteSize(remoteText),
+          extension: getExtension(copyPath),
+          mtime: Date.now(),
+          isText: true
+        };
+        await this.uploadLocal(copyPath, copyMeta, filesFolderId, manifest, index, counters, localManifest);
+        await this.uploadLocal(path, localMeta, filesFolderId, manifest, index, counters, localManifest);
         return true;
       }
     }

@@ -250,7 +250,7 @@ export type ManualConflictDetails = {
   changeCount: number;
 };
 
-export type ManualConflictChoice = "keep-local" | "keep-remote" | "cancel";
+export type ManualConflictChoice = "keep-local" | "keep-remote" | "keep-both" | "cancel";
 
 export function defaultIgnoredPaths(configDir: string): string {
   const normalizedConfigDir = configDir.replace(/\/+$/, "");

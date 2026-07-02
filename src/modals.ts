@@ -259,6 +259,7 @@ export function showManualConflictModal(app: App, details: ManualConflictDetails
     new Setting(modal.contentEl)
       .addButton((button) => button.setButtonText("Keep Local").setCta().onClick(() => finish("keep-local")))
       .addButton((button) => button.setButtonText("Keep Remote").setWarning().onClick(() => finish("keep-remote")))
+      .addButton((button) => button.setButtonText("Keep Both").onClick(() => finish("keep-both")))
       .addButton((button) => button.setButtonText("Show Diff").onClick(() => {
         const visible = !diffEl.hasClass("obsidian-google-sync-hidden");
         diffEl.toggleClass("obsidian-google-sync-hidden", visible);
