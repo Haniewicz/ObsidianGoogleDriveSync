@@ -625,8 +625,6 @@ export class SyncEngine {
       return true;
     }
     const canTryTextMerge = localMeta.isText && isLikelyText(path) && localMeta.size <= MAX_SNAPSHOT_BYTES && remoteData.byteLength <= MAX_SNAPSHOT_BYTES;
-    await this.captureConflictBackup(path, localMeta, remoteMeta, remoteData);
-    await this.log("sync-engine-conflict-diagnostic-backup-created", { path });
     if (canTryTextMerge) {
       const baseText = index[path]?.baseSnapshot;
       const merged = await this.tryAutoMergeConflict(path, localMeta, remoteFile, filesFolderId, manifest, index, counters, backupFiles, localManifest);
@@ -634,6 +632,7 @@ export class SyncEngine {
 
       const localText = await this.options.scanner.readText(path);
       const remoteText = typeof remoteFile.content === "string" ? remoteFile.content : new TextDecoder().decode(remoteData);
+      await this.log("sync-engine-conflict-modal-open", { path, manual: allowManualResolution });
       const choice = await showManualConflictModal(this.options.app, {
         path,
         localText,
@@ -657,6 +656,8 @@ export class SyncEngine {
       }
       return false;
     }
+    await this.captureConflictBackup(path, localMeta, remoteMeta, remoteData);
+    await this.log("sync-engine-conflict-diagnostic-backup-created", { path });
     await this.log("sync-engine-conflict-keep-both-binary", { path });
     await this.keepBothConflict(path, localMeta, remoteMeta, remoteFile, filesFolderId, manifest, index, counters, localManifest);
     return true;
