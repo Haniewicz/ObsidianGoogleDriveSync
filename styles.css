@@ -101,6 +101,37 @@
   color: var(--text-muted);
 }
 
+.obsidian-google-sync-conflict-actions {
+  border-top: 0;
+  padding-top: 0.75rem;
+}
+
+.obsidian-google-sync-conflict-actions .setting-item-info {
+  display: none;
+}
+
+.obsidian-google-sync-conflict-actions .setting-item-control {
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  width: 100%;
+}
+
+.obsidian-google-sync-conflict-actions .setting-item-control button {
+  height: auto;
+  min-height: var(--input-height);
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  width: 100%;
+}
+
+@media (max-width: 360px) {
+  .obsidian-google-sync-conflict-actions .setting-item-control {
+    grid-template-columns: 1fr;
+  }
+}
+
 .obsidian-google-sync-snapshot-list {
   max-height: 14rem;
   overflow: auto;
