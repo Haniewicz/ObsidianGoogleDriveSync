@@ -625,51 +625,23 @@ export class SyncEngine {
       return true;
     }
     const canTryTextMerge = localMeta.isText && isLikelyText(path) && localMeta.size <= MAX_SNAPSHOT_BYTES && remoteData.byteLength <= MAX_SNAPSHOT_BYTES;
-    if (!allowManualResolution) {
-      if (canTryTextMerge) {
-        const merged = await this.tryAutoMergeConflict(path, localMeta, remoteFile, filesFolderId, manifest, index, counters, backupFiles, localManifest);
-        if (merged) return true;
-      }
-      await this.log("sync-engine-conflict-auto-keep-both", { path });
-      await this.keepBothConflict(path, localMeta, remoteMeta, remoteFile, filesFolderId, manifest, index, counters, localManifest);
-      return true;
-    }
     await this.captureConflictBackup(path, localMeta, remoteMeta, remoteData);
     await this.log("sync-engine-conflict-diagnostic-backup-created", { path });
     if (canTryTextMerge) {
+      const baseText = index[path]?.baseSnapshot;
+      const merged = await this.tryAutoMergeConflict(path, localMeta, remoteFile, filesFolderId, manifest, index, counters, backupFiles, localManifest);
+      if (merged) return true;
+
       const localText = await this.options.scanner.readText(path);
       const remoteText = typeof remoteFile.content === "string" ? remoteFile.content : new TextDecoder().decode(remoteData);
-      const baseText = index[path]?.baseSnapshot;
-      if (baseText !== undefined) {
-        const merged = this.mergeEngine.merge(path, baseText, localText, remoteText);
-        if (merged.status !== "conflict") {
-          const mergedText = merged.status === "no-changes" ? localText : merged.content;
-          if (backupFiles) await this.captureLocalBackup(backupFiles, path, localMeta);
-          await writeVaultFile(this.options.app.vault, path, mergedText);
-          const hash = await sha256Hex(mergedText);
-          const localMerged: LocalFileMeta = {
-            path,
-            hash,
-            size: byteSize(mergedText),
-            extension: "md",
-            mtime: Date.now(),
-            isText: true
-          };
-          await this.uploadLocal(path, localMerged, filesFolderId, manifest, index, counters, localManifest);
-          return true;
-        }
-      }
-
-      const choice = allowManualResolution
-        ? await showManualConflictModal(this.options.app, {
-          path,
-          localText,
-          remoteText,
-          deviceName: remoteMeta.deviceName ?? remoteMeta.deviceId ?? "Unknown device",
-          modifiedAt: remoteMeta.mtime ?? remoteMeta.updatedAt ?? null,
-          changeCount: baseText === undefined ? 2 : countChangedLines(baseText, localText) + countChangedLines(baseText, remoteText)
-        })
-        : "keep-both";
+      const choice = await showManualConflictModal(this.options.app, {
+        path,
+        localText,
+        remoteText,
+        deviceName: remoteMeta.deviceName ?? remoteMeta.deviceId ?? "Unknown device",
+        modifiedAt: remoteMeta.mtime ?? remoteMeta.updatedAt ?? null,
+        changeCount: baseText === undefined ? 2 : countChangedLines(baseText, localText) + countChangedLines(baseText, remoteText)
+      });
       if (choice === "keep-local") {
         await this.uploadLocal(path, localMeta, filesFolderId, manifest, index, counters, localManifest);
         return true;
