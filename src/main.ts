@@ -10,7 +10,7 @@ import { LocalVaultScanner } from "./scanner";
 import { GoogleDriveSyncSettingTab } from "./settings";
 import { SyncEngine } from "./sync";
 import { DEFAULT_SETTINGS, GoogleDriveSyncSettings, InitialSyncDirection, PluginData, RemoteSnapshotMeta, StoredAuth, StoredPluginData, SyncStatus, SyncSummary, defaultIgnoredPaths } from "./types";
-import { createLogger } from "./utils";
+import { createLogger, ignoredPatternsFromSettings, isIgnored } from "./utils";
 
 export default class GoogleDriveSyncPlugin extends Plugin {
   settings: GoogleDriveSyncSettings = { ...DEFAULT_SETTINGS };
@@ -31,6 +31,7 @@ export default class GoogleDriveSyncPlugin extends Plugin {
   private debounceTimer?: number;
   private cloudWatchRunning = false;
   private startupSyncRunning = false;
+  private syncRunning = false;
   private normalUploadUnlocked = false;
   private ignoreVaultEventsUntil = 0;
   private dirtyPaths = new Set<string>();
@@ -274,7 +275,7 @@ export default class GoogleDriveSyncPlugin extends Plugin {
   }
 
   async syncNow(manual = false) {
-    if (this.syncEngine?.isRunning()) {
+    if (this.syncRunning || this.syncEngine?.isRunning()) {
       if (manual) new Notice("Google Drive sync is already running.");
       return;
     }
@@ -289,8 +290,9 @@ export default class GoogleDriveSyncPlugin extends Plugin {
       return;
     }
     const startedAt = Date.now();
+    this.syncRunning = true;
+    this.ignoreVaultEventsUntil = Date.now() + 5000;
     await this.setSyncStatus({ state: "syncing", lastStartedAt: startedAt, lastError: undefined });
-    this.ignoreVaultEventsUntil = Date.now() + 2000;
     try {
       this.log("Starting sync", { dirtyCount: this.dirtyPaths.size });
       this.dirtyPaths.clear();
@@ -301,7 +303,8 @@ export default class GoogleDriveSyncPlugin extends Plugin {
       this.log("Sync failed", error instanceof Error ? error.message : String(error));
       await this.recordSyncError(error);
     } finally {
-      this.ignoreVaultEventsUntil = Date.now() + 2000;
+      this.ignoreVaultEventsUntil = Date.now() + 5000;
+      this.syncRunning = false;
     }
   }
 
@@ -405,7 +408,7 @@ export default class GoogleDriveSyncPlugin extends Plugin {
   }
 
   async checkCloudForChanges() {
-    if (this.cloudWatchRunning || !this.getStoredAuth() || !this.isInitialSyncCompleted()) return;
+    if (this.cloudWatchRunning || this.syncRunning || this.syncEngine.isRunning() || !this.getStoredAuth() || !this.isInitialSyncCompleted()) return;
     this.cloudWatchRunning = true;
     try {
       const manifest = await this.drive.loadRemoteManifest(this.settings.remoteFolderName);
@@ -501,7 +504,12 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 
   private shouldIgnoreVaultEvent(path?: string): boolean {
     if (!path) return Date.now() < this.ignoreVaultEventsUntil;
-    return Date.now() < this.ignoreVaultEventsUntil || path.startsWith(".sync/") || path.startsWith(".trash/");
+    const ignored = ignoredPatternsFromSettings(this.settings.ignoredPaths);
+    return Date.now() < this.ignoreVaultEventsUntil
+      || path.startsWith(".sync/")
+      || path.startsWith(".trash/")
+      || path.startsWith(`${this.app.vault.configDir}/plugins/google-drive-vault-sync/`)
+      || isIgnored(path, ignored);
   }
 
   private getVaultId(): string {
