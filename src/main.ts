@@ -127,6 +127,9 @@ export default class GoogleDriveSyncPlugin extends Plugin {
       ...(loaded?.settings ?? {})
     };
     if (!loaded?.settings?.ignoredPaths) settings.ignoredPaths = defaultIgnoredPaths(this.app.vault.configDir);
+    if (!settings.ignoredPaths.split(/\r?\n/).some((line) => line.trim() === ".sync/")) {
+      settings.ignoredPaths = `${settings.ignoredPaths.trim()}\n.sync/`.trim();
+    }
     this.settings = settings;
   }
 

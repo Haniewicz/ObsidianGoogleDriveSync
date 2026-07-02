@@ -259,6 +259,7 @@ export function defaultIgnoredPaths(configDir: string): string {
     `${normalizedConfigDir}/workspace.json`,
     `${normalizedConfigDir}/workspace-mobile.json`,
     `${normalizedConfigDir}/cache/`,
+    ".sync/",
     ".trash/"
   ].join("\n");
 }

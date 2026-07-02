@@ -426,7 +426,7 @@ export class SyncEngine {
 
   private async captureConflictBackup(path: string, localMeta: LocalFileMeta, remoteMeta: RemoteFileMeta, remoteData: ArrayBuffer): Promise<void> {
     const stamp = timestampPath(new Date());
-    const backupRoot = `.sync/backups/${stamp}/${path}`;
+    const backupRoot = conflictBackupRoot(stamp, path);
     const entry = this.options.getIndex()[path];
     if (entry?.baseSnapshot !== undefined) {
       await writeVaultFile(this.options.app.vault, `${backupRoot}/base.md`, entry.baseSnapshot);
@@ -551,25 +551,28 @@ export class SyncEngine {
       return true;
     }
     const isText = localMeta.isText && isLikelyText(path) && localMeta.size <= MAX_SNAPSHOT_BYTES && remoteData.byteLength <= MAX_SNAPSHOT_BYTES;
-    if (isText && index[path]?.baseSnapshot !== undefined) {
+    if (isText) {
       const localText = await this.options.scanner.readText(path);
       const remoteText = typeof remoteFile.content === "string" ? remoteFile.content : new TextDecoder().decode(remoteData);
-      const merged = this.mergeEngine.merge(path, index[path].baseSnapshot, localText, remoteText);
-      if (merged.status !== "conflict") {
-        const mergedText = merged.status === "no-changes" ? localText : merged.content;
-        if (backupFiles) await this.captureLocalBackup(backupFiles, path, localMeta);
-        await writeVaultFile(this.options.app.vault, path, mergedText);
-        const hash = await sha256Hex(mergedText);
-        const localMerged: LocalFileMeta = {
-          path,
-          hash,
-          size: byteSize(mergedText),
-          extension: "md",
-          mtime: Date.now(),
-          isText: true
-        };
-        await this.uploadLocal(path, localMerged, filesFolderId, manifest, index, counters, localManifest);
-        return true;
+      const baseText = index[path]?.baseSnapshot;
+      if (baseText !== undefined) {
+        const merged = this.mergeEngine.merge(path, baseText, localText, remoteText);
+        if (merged.status !== "conflict") {
+          const mergedText = merged.status === "no-changes" ? localText : merged.content;
+          if (backupFiles) await this.captureLocalBackup(backupFiles, path, localMeta);
+          await writeVaultFile(this.options.app.vault, path, mergedText);
+          const hash = await sha256Hex(mergedText);
+          const localMerged: LocalFileMeta = {
+            path,
+            hash,
+            size: byteSize(mergedText),
+            extension: "md",
+            mtime: Date.now(),
+            isText: true
+          };
+          await this.uploadLocal(path, localMerged, filesFolderId, manifest, index, counters, localManifest);
+          return true;
+        }
       }
 
       const choice = await showManualConflictModal(this.options.app, {
@@ -578,7 +581,7 @@ export class SyncEngine {
         remoteText,
         deviceName: remoteMeta.deviceName ?? remoteMeta.deviceId ?? "Unknown device",
         modifiedAt: remoteMeta.mtime ?? remoteMeta.updatedAt ?? null,
-        changeCount: countChangedLines(index[path].baseSnapshot, localText) + countChangedLines(index[path].baseSnapshot, remoteText)
+        changeCount: baseText === undefined ? 2 : countChangedLines(baseText, localText) + countChangedLines(baseText, remoteText)
       });
       if (choice === "keep-local") {
         await this.uploadLocal(path, localMeta, filesFolderId, manifest, index, counters, localManifest);
@@ -723,6 +726,15 @@ function timestampPath(date: Date): string {
     String(date.getMinutes()).padStart(2, "0"),
     String(date.getSeconds()).padStart(2, "0")
   ].join("-");
+}
+
+function conflictBackupRoot(stamp: string, path: string): string {
+  const encoded = path
+    .split("/")
+    .filter(Boolean)
+    .map((part) => encodeURIComponent(part).replace(/\./g, "%2E"))
+    .join("/");
+  return `.sync/backups/${stamp}/${encoded || "root"}`;
 }
 
 function isOfflineError(error: unknown): boolean {
