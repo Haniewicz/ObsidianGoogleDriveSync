@@ -81,7 +81,7 @@ assertBranch();
 
 const packageJson = readJson("package.json");
 const nextVersion = mode === "dev" ? nextDevVersion(packageJson.version) : stableVersion(packageJson.version);
-const tag = `v${nextVersion}`;
+const tag = nextVersion;
 
 packageJson.version = nextVersion;
 writeJson("package.json", packageJson);

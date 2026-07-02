@@ -1,7 +1,9 @@
-import { Notice, Platform, Plugin, TAbstractFile, setIcon } from "obsidian";
+import { Notice, Platform, Plugin, TAbstractFile, TFile, moment, setIcon } from "obsidian";
 import { GoogleAuth } from "./auth";
 import { decodeTransferPayload } from "./authTransfer";
 import { GoogleDriveClient } from "./drive";
+import { OfflineSyncQueue } from "./offlineQueue";
+import { GoogleDriveProvider } from "./provider";
 import { AuthExportModal, DeviceFlowModal, chooseInitialSyncDirection, chooseLocalFilesToKeep, confirmDangerAction, confirmResetIndex, showAuthImportModal } from "./modals";
 import { RequestQueue } from "./queue";
 import { LocalVaultScanner } from "./scanner";
@@ -16,6 +18,8 @@ export default class GoogleDriveSyncPlugin extends Plugin {
   queue = new RequestQueue(DEFAULT_SETTINGS.requestConcurrency);
   auth!: GoogleAuth;
   drive!: GoogleDriveClient;
+  provider!: GoogleDriveProvider;
+  offlineQueue!: OfflineSyncQueue;
   scanner!: LocalVaultScanner;
   syncEngine!: SyncEngine;
   accountLabel?: string;
@@ -26,6 +30,8 @@ export default class GoogleDriveSyncPlugin extends Plugin {
   private cloudWatchTimer?: number;
   private debounceTimer?: number;
   private cloudWatchRunning = false;
+  private startupSyncRunning = false;
+  private normalUploadUnlocked = false;
   private dirtyPaths = new Set<string>();
   private log = createLogger(() => this.settings.debugMode);
 
@@ -43,15 +49,32 @@ export default class GoogleDriveSyncPlugin extends Plugin {
     );
     this.auth.setAuth(this.pluginData.auth);
     this.drive = new GoogleDriveClient(this.auth, this.queue);
+    this.provider = new GoogleDriveProvider(
+      this.drive,
+      () => this.settings.remoteFolderName,
+      () => this.getVaultId(),
+      () => this.getDeviceId(),
+      () => this.getDeviceName()
+    );
+    this.offlineQueue = new OfflineSyncQueue(
+      () => this.pluginData.offlineQueue ?? [],
+      async (offlineQueue) => this.savePluginData({ offlineQueue }),
+      () => this.getDeviceId()
+    );
     this.scanner = new LocalVaultScanner(this.app.vault, () => this.settings.ignoredPaths);
     this.syncEngine = new SyncEngine({
       app: this.app,
       scanner: this.scanner,
       drive: this.drive,
+      provider: this.provider,
+      offlineQueue: this.offlineQueue,
       getRemoteFolderName: () => this.settings.remoteFolderName,
       getVaultId: () => this.getVaultId(),
       getIndex: () => this.pluginData.index ?? {},
       setIndex: async (index) => this.savePluginData({ index }),
+      getLocalManifest: () => this.pluginData.localManifest,
+      setLocalManifest: async (localManifest) => this.savePluginData({ localManifest }),
+      getOfflineQueueItems: () => this.pluginData.offlineQueue ?? [],
       getMaxDeletionPercent: () => this.settings.maxDeletionPercent,
       getConflictPolicy: () => this.settings.conflictPolicy,
       getDeviceId: () => this.getDeviceId(),
@@ -84,7 +107,9 @@ export default class GoogleDriveSyncPlugin extends Plugin {
     void this.refreshAccountLabel();
 
     if (this.settings.syncOnStartup && this.getStoredAuth() && this.isInitialSyncCompleted()) {
-      window.setTimeout(() => void this.syncNow(), 2500);
+      window.setTimeout(() => void this.safeStartupSync(), 2500);
+    } else {
+      this.normalUploadUnlocked = true;
     }
   }
 
@@ -116,6 +141,8 @@ export default class GoogleDriveSyncPlugin extends Plugin {
     this.pluginData = {
       auth: loaded?.auth,
       index,
+      localManifest: loaded?.localManifest,
+      offlineQueue: loaded?.offlineQueue ?? [],
       vaultId: loaded?.vaultId,
       deviceId: loaded?.deviceId,
       appliedCommandIds: loaded?.appliedCommandIds ?? [],
@@ -267,6 +294,30 @@ export default class GoogleDriveSyncPlugin extends Plugin {
     }
   }
 
+  async safeStartupSync() {
+    if (this.startupSyncRunning) return;
+    this.startupSyncRunning = true;
+    this.normalUploadUnlocked = false;
+    try {
+      await this.syncNow(false);
+      this.normalUploadUnlocked = true;
+    } finally {
+      this.startupSyncRunning = false;
+    }
+  }
+
+  async openDailyNoteSafely() {
+    if (!this.getStoredAuth()) {
+      new Notice("Connect Google Drive before opening the daily note safely.");
+      return;
+    }
+    if (this.isInitialSyncCompleted()) await this.syncNow(false);
+    const path = `${moment().format("YYYY-MM-DD")}.md`;
+    const file = this.app.vault.getAbstractFileByPath(path);
+    const target = file instanceof TFile ? file : await this.app.vault.create(path, "");
+    await this.app.workspace.getLeaf(false).openFile(target);
+  }
+
   async resetCloudFromLocal() {
     await this.requireConnectedForDangerAction();
     await this.setSyncStatus({ state: "syncing", lastStartedAt: Date.now(), lastError: undefined });
@@ -399,6 +450,12 @@ export default class GoogleDriveSyncPlugin extends Plugin {
       }
     });
     this.addCommand({
+      id: "open-daily-note-safely",
+      name: "Open Daily Note Safely",
+      icon: "calendar-check",
+      callback: () => void this.openDailyNoteSafely()
+    });
+    this.addCommand({
       id: "reset-local-sync-index",
       name: "Reset local sync index",
       callback: async () => {
@@ -414,6 +471,7 @@ export default class GoogleDriveSyncPlugin extends Plugin {
     const schedule = (file?: TAbstractFile) => {
       if (file?.path) this.dirtyPaths.add(file.path);
       if (!this.settings.autoSyncEnabled || !this.getStoredAuth() || !this.isInitialSyncCompleted()) return;
+      if (!this.normalUploadUnlocked) return;
       if (this.debounceTimer !== undefined) window.clearTimeout(this.debounceTimer);
       const delayMs = Math.max(0, this.settings.syncDebounceSeconds) * 1000;
       this.debounceTimer = window.setTimeout(() => void this.syncNow(), delayMs);
