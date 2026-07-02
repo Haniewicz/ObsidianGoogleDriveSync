@@ -254,7 +254,7 @@ export function showManualConflictModal(app: App, details: ManualConflictDetails
 
     const diffEl = modal.contentEl.createDiv("obsidian-google-sync-diff");
     diffEl.addClass("obsidian-google-sync-hidden");
-    renderDiff(diffEl, details.remoteText, details.localText, true);
+    let diffRendered = false;
 
     new Setting(modal.contentEl)
       .addButton((button) => button.setButtonText("Keep Local").setCta().onClick(() => finish("keep-local")))
@@ -262,6 +262,10 @@ export function showManualConflictModal(app: App, details: ManualConflictDetails
       .addButton((button) => button.setButtonText("Keep Both").onClick(() => finish("keep-both")))
       .addButton((button) => button.setButtonText("Show Diff").onClick(() => {
         const visible = !diffEl.hasClass("obsidian-google-sync-hidden");
+        if (!visible && !diffRendered) {
+          diffRendered = true;
+          renderDiff(diffEl, details.remoteText, details.localText, true);
+        }
         diffEl.toggleClass("obsidian-google-sync-hidden", visible);
         button.setButtonText(visible ? "Show Diff" : "Hide Diff");
       }))
