@@ -10,7 +10,10 @@ import { LocalVaultScanner } from "./scanner";
 import { GoogleDriveSyncSettingTab } from "./settings";
 import { SyncEngine } from "./sync";
 import { DEFAULT_SETTINGS, GoogleDriveSyncSettings, InitialSyncDirection, PluginData, RemoteSnapshotMeta, StoredAuth, StoredPluginData, SyncStatus, SyncSummary, defaultIgnoredPaths } from "./types";
-import { createLogger, ignoredPatternsFromSettings, isIgnored } from "./utils";
+import { createLogger, ignoredPatternsFromSettings, isIgnored, sanitizeLogValue } from "./utils";
+
+const LOCAL_SYNC_LOG_PATH = ".sync/google-drive-vault-sync.log";
+const MAX_LOCAL_SYNC_LOG_BYTES = 512 * 1024;
 
 export default class GoogleDriveSyncPlugin extends Plugin {
   settings: GoogleDriveSyncSettings = { ...DEFAULT_SETTINGS };
@@ -36,6 +39,7 @@ export default class GoogleDriveSyncPlugin extends Plugin {
   private ignoreVaultEventsUntil = 0;
   private dirtyPaths = new Set<string>();
   private log = createLogger(() => this.settings.debugMode);
+  private logSessionId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
   async onload() {
     await this.loadSettings();
@@ -86,7 +90,15 @@ export default class GoogleDriveSyncPlugin extends Plugin {
       getBackupEnabled: () => this.settings.backupEnabled,
       getBackupMode: () => this.settings.backupMode,
       getBackupIntervalMinutes: () => this.settings.backupIntervalMinutes,
-      getMaxBackups: () => this.settings.maxBackups
+      getMaxBackups: () => this.settings.maxBackups,
+      appendLog: (message, details) => this.appendSyncLog(message, details)
+    });
+    await this.appendSyncLog("plugin-loaded", {
+      version: this.manifest.version,
+      mobile: Platform.isMobile,
+      syncOnStartup: this.settings.syncOnStartup,
+      initialSyncCompleted: this.isInitialSyncCompleted(),
+      connected: this.getStoredAuth() !== undefined
     });
 
     this.addSettingTab(new GoogleDriveSyncSettingTab(this));
@@ -108,11 +120,17 @@ export default class GoogleDriveSyncPlugin extends Plugin {
     void this.refreshAccountLabel();
 
     if (this.settings.syncOnStartup && this.getStoredAuth() && this.isInitialSyncCompleted()) {
+      await this.appendSyncLog("startup-sync-scheduled", { delayMs: 2500 });
       window.setTimeout(() => void this.safeStartupSync(), 2500);
     } else {
       this.normalUploadUnlocked = true;
       await this.rememberCurrentRemoteMarkers();
       this.configureTimers();
+      await this.appendSyncLog("startup-sync-skipped", {
+        syncOnStartup: this.settings.syncOnStartup,
+        connected: this.getStoredAuth() !== undefined,
+        initialSyncCompleted: this.isInitialSyncCompleted()
+      });
     }
   }
 
@@ -277,15 +295,18 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 
   async syncNow(manual = false) {
     if (this.syncRunning || this.syncEngine?.isRunning()) {
+      await this.appendSyncLog("sync-skipped-already-running", { manual, syncRunning: this.syncRunning, engineRunning: this.syncEngine?.isRunning() });
       if (manual) new Notice("Google Drive sync is already running.");
       return;
     }
     if (!this.getStoredAuth()) {
+      await this.appendSyncLog("sync-skipped-disconnected", { manual });
       if (manual) new Notice("Connect Google Drive before syncing.");
       await this.setSyncStatus({ state: "disconnected" });
       return;
     }
     if (!this.isInitialSyncCompleted()) {
+      await this.appendSyncLog("sync-skipped-initial-sync-incomplete", { manual });
       if (manual) new Notice("Choose first sync direction before syncing.");
       this.onConnectionChange?.();
       return;
@@ -293,19 +314,28 @@ export default class GoogleDriveSyncPlugin extends Plugin {
     const startedAt = Date.now();
     this.syncRunning = true;
     this.ignoreVaultEventsUntil = Date.now() + 5000;
+    await this.appendSyncLog("sync-start", {
+      manual,
+      dirtyCount: this.dirtyPaths.size,
+      startupSyncRunning: this.startupSyncRunning,
+      normalUploadUnlocked: this.normalUploadUnlocked
+    });
     await this.setSyncStatus({ state: "syncing", lastStartedAt: startedAt, lastError: undefined });
     try {
       this.log("Starting sync", { dirtyCount: this.dirtyPaths.size });
       this.dirtyPaths.clear();
       const summary = await this.syncEngine.syncNow(manual);
       if (summary) await this.recordSyncSuccess(summary);
+      await this.appendSyncLog("sync-finished", summary);
     } catch (error) {
       new Notice(error instanceof Error ? error.message : "Google Drive sync failed.");
       this.log("Sync failed", error instanceof Error ? error.message : String(error));
+      await this.appendSyncLog("sync-error", this.errorDetails(error));
       await this.recordSyncError(error);
     } finally {
       this.ignoreVaultEventsUntil = Date.now() + 5000;
       this.syncRunning = false;
+      await this.appendSyncLog("sync-unlocked", { ignoreVaultEventsUntil: this.ignoreVaultEventsUntil });
     }
   }
 
@@ -313,13 +343,19 @@ export default class GoogleDriveSyncPlugin extends Plugin {
     if (this.startupSyncRunning) return;
     this.startupSyncRunning = true;
     this.normalUploadUnlocked = false;
+    await this.appendSyncLog("startup-sync-start");
     try {
       await this.syncNow(false);
       await this.rememberCurrentRemoteMarkers();
       this.normalUploadUnlocked = true;
+      await this.appendSyncLog("startup-sync-finished");
+    } catch (error) {
+      await this.appendSyncLog("startup-sync-error", this.errorDetails(error));
+      throw error;
     } finally {
       this.startupSyncRunning = false;
       this.configureTimers();
+      await this.appendSyncLog("startup-sync-unlocked");
     }
   }
 
@@ -419,24 +455,48 @@ export default class GoogleDriveSyncPlugin extends Plugin {
       !this.normalUploadUnlocked ||
       !this.getStoredAuth() ||
       !this.isInitialSyncCompleted()
-    ) return;
+    ) {
+      await this.appendSyncLog("cloud-watch-skipped", {
+        cloudWatchRunning: this.cloudWatchRunning,
+        startupSyncRunning: this.startupSyncRunning,
+        syncRunning: this.syncRunning,
+        engineRunning: this.syncEngine.isRunning(),
+        normalUploadUnlocked: this.normalUploadUnlocked,
+        connected: this.getStoredAuth() !== undefined,
+        initialSyncCompleted: this.isInitialSyncCompleted()
+      });
+      return;
+    }
     this.cloudWatchRunning = true;
     try {
       const manifest = await this.drive.loadRemoteManifest(this.settings.remoteFolderName);
-      if (!manifest) return;
+      if (!manifest) {
+        await this.appendSyncLog("cloud-watch-no-manifest");
+        return;
+      }
       const commandId = manifest.command?.id;
       const hasNewCommand = commandId !== undefined && commandId !== this.pluginData.lastRemoteCommandId;
       const hasRemoteUpdate = manifest.updatedAt !== undefined && manifest.updatedAt !== this.pluginData.lastRemoteUpdatedAt;
+      await this.appendSyncLog("cloud-watch-checked", {
+        updatedAt: manifest.updatedAt,
+        previousUpdatedAt: this.pluginData.lastRemoteUpdatedAt,
+        commandId,
+        previousCommandId: this.pluginData.lastRemoteCommandId,
+        hasNewCommand,
+        hasRemoteUpdate
+      });
       await this.savePluginData({
         lastRemoteUpdatedAt: manifest.updatedAt,
         lastRemoteCommandId: commandId
       });
       if (hasNewCommand || hasRemoteUpdate) {
         this.log("Cloud watch detected remote change", { updatedAt: manifest.updatedAt, commandId });
+        await this.appendSyncLog("cloud-watch-trigger-sync", { hasNewCommand, hasRemoteUpdate });
         await this.syncNow();
       }
     } catch (error) {
       this.log("Cloud watch failed", error instanceof Error ? error.message : String(error));
+      await this.appendSyncLog("cloud-watch-error", this.errorDetails(error));
     } finally {
       this.cloudWatchRunning = false;
     }
@@ -494,13 +554,17 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 
   private registerVaultEvents() {
     const schedule = (file?: TAbstractFile) => {
-      if (this.shouldIgnoreVaultEvent(file?.path)) return;
+      if (this.shouldIgnoreVaultEvent(file?.path)) {
+        void this.appendSyncLog("vault-event-ignored", { path: file?.path, syncRunning: this.syncRunning, startupSyncRunning: this.startupSyncRunning });
+        return;
+      }
       if (file?.path) this.dirtyPaths.add(file.path);
       if (!this.settings.autoSyncEnabled || !this.getStoredAuth() || !this.isInitialSyncCompleted()) return;
       if (!this.normalUploadUnlocked) return;
       if (this.syncEngine.isRunning()) return;
       if (this.debounceTimer !== undefined) window.clearTimeout(this.debounceTimer);
       const delayMs = Math.max(0, this.settings.syncDebounceSeconds) * 1000;
+      void this.appendSyncLog("vault-event-schedule-sync", { path: file?.path, delayMs });
       this.debounceTimer = window.setTimeout(() => void this.syncNow(), delayMs);
     };
     this.registerEvent(this.app.vault.on("create", schedule));
@@ -663,8 +727,45 @@ export default class GoogleDriveSyncPlugin extends Plugin {
         lastRemoteUpdatedAt: manifest?.updatedAt,
         lastRemoteCommandId: manifest?.command?.id
       });
+      await this.appendSyncLog("remote-markers-remembered", {
+        updatedAt: manifest?.updatedAt,
+        commandId: manifest?.command?.id
+      });
     } catch (error) {
       this.log("Could not refresh cloud watch marker", error instanceof Error ? error.message : String(error));
+      await this.appendSyncLog("remote-markers-error", this.errorDetails(error));
     }
+  }
+
+  private async appendSyncLog(message: string, details?: unknown): Promise<void> {
+    const detailsText = details === undefined ? "" : ` ${sanitizeLogValue(details)}`;
+    const line = `${new Date().toISOString()} [${this.logSessionId}] ${message}${detailsText}\n`;
+    try {
+      await this.app.vault.adapter.mkdir(".sync").catch(() => undefined);
+      let existing = "";
+      try {
+        existing = await this.app.vault.adapter.read(LOCAL_SYNC_LOG_PATH);
+      } catch {
+        existing = "";
+      }
+      let next = `${existing}${line}`;
+      if (new TextEncoder().encode(next).byteLength > MAX_LOCAL_SYNC_LOG_BYTES) {
+        next = next.slice(-MAX_LOCAL_SYNC_LOG_BYTES);
+        const firstLine = next.indexOf("\n");
+        if (firstLine >= 0) next = next.slice(firstLine + 1);
+        next = `${new Date().toISOString()} [${this.logSessionId}] log-truncated\n${next}`;
+      }
+      await this.app.vault.adapter.write(LOCAL_SYNC_LOG_PATH, next);
+    } catch (error) {
+      console.warn("[Google Drive Sync] Could not write local sync log", error);
+    }
+  }
+
+  private errorDetails(error: unknown): Record<string, string | undefined> {
+    return {
+      name: error instanceof Error ? error.name : undefined,
+      message: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined
+    };
   }
 }

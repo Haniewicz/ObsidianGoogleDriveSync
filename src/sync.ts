@@ -34,6 +34,7 @@ export type SyncEngineOptions = {
   getBackupMode: () => BackupMode;
   getBackupIntervalMinutes: () => number;
   getMaxBackups: () => number;
+  appendLog: (message: string, details?: unknown) => Promise<void>;
 };
 
 type SyncCounters = {
@@ -68,11 +69,17 @@ export class SyncEngine {
     const safetyBackupFiles: Record<string, BackupFileSource> = {};
     const routineBackupFiles: Record<string, BackupFileSource> = {};
     try {
+      await this.log("sync-engine-start", { manual });
       await this.options.provider.prepare();
       await this.drainOfflineQueue();
       const local = await this.options.scanner.scan();
       const state = this.options.provider.getState();
       const remoteChanges = await this.options.provider.listChanges();
+      await this.log("sync-engine-state-loaded", {
+        localCount: Object.keys(local).length,
+        remoteCount: Object.keys(state.manifest.files).length,
+        remoteChangeCount: remoteChanges.length
+      });
       const commandSummary = await this.applyRemoteCommandIfNeeded(state, local, counters);
       if (commandSummary) return commandSummary;
       const captureRoutineBackups = this.shouldCaptureRoutineBackups(state.manifest);
@@ -80,7 +87,9 @@ export class SyncEngine {
       const localManifest = this.currentLocalManifest(index);
       await this.applyLocalRenames(local, state.manifest, index, localManifest, counters);
       const paths = unique([...Object.keys(local), ...remoteChanges.map((change) => change.path), ...Object.keys(index), ...Object.keys(localManifest.records)]);
+      await this.log("sync-engine-paths-planned", { pathCount: paths.length });
       const deletionPlan = this.planDeletions(paths, local, state.manifest, index, localManifest);
+      if (deletionPlan.length > 0) await this.log("sync-engine-deletion-plan", { count: deletionPlan.length });
       const allowedDeletions = await this.reviewLargeDeletionPlan(deletionPlan, Object.keys(index).length);
       if (allowedDeletions === null) {
         new Notice("Google Drive sync cancelled.");
@@ -151,7 +160,15 @@ export class SyncEngine {
 
         if (localMeta && remoteMeta && !remoteMeta.deleted && localMeta.hash !== baseHash && remoteMeta.hash !== baseHash) {
           changedPaths.push(path);
+          await this.log("sync-engine-conflict-detected", {
+            path,
+            localHash: localMeta.hash,
+            remoteHash: remoteMeta.hash,
+            baseHash,
+            manual
+          });
           const resolved = await this.resolveConflict(path, localMeta, remoteMeta, state.filesFolderId, state.manifest, index, counters, safetyBackupFiles, localManifest, manual);
+          await this.log("sync-engine-conflict-resolved", { path, resolved });
           if (!resolved) counters.conflicts += 1;
         }
       }
@@ -166,12 +183,24 @@ export class SyncEngine {
       await this.options.setIndex(index);
       localManifest.updatedAt = Date.now();
       await this.options.setLocalManifest(localManifest);
+      await this.log("sync-engine-finished", {
+        uploads: counters.uploads,
+        downloads: counters.downloads,
+        localDeletes: counters.localDeletes,
+        remoteDeletes: counters.remoteDeletes,
+        conflicts: counters.conflicts,
+        errors: counters.errors
+      });
       showConflictNotice(counters.conflicts);
       if (manual) new Notice("Google Drive sync complete.");
       return this.summary(startedAt, counters);
     } finally {
       this.running = false;
     }
+  }
+
+  private async log(message: string, details?: unknown): Promise<void> {
+    await this.options.appendLog(message, details);
   }
 
   async resetCloudFromLocal(): Promise<SyncSummary> {
@@ -634,11 +663,13 @@ export class SyncEngine {
         return true;
       }
       if (choice === "keep-both") {
+        await this.log("sync-engine-conflict-keep-both", { path, manual: allowManualResolution });
         await this.keepBothConflict(path, localMeta, remoteMeta, remoteFile, filesFolderId, manifest, index, counters, localManifest);
         return true;
       }
       return false;
     }
+    await this.log("sync-engine-conflict-keep-both-binary", { path });
     await this.keepBothConflict(path, localMeta, remoteMeta, remoteFile, filesFolderId, manifest, index, counters, localManifest);
     return true;
   }
@@ -656,6 +687,7 @@ export class SyncEngine {
   ): Promise<void> {
     const localContent = await this.options.scanner.read(path, !localMeta.isText);
     const copyPath = conflictPath(path, this.options.getDeviceName());
+    await this.log("sync-engine-keep-both-write-copy", { path, copyPath });
     await writeVaultFile(this.options.app.vault, copyPath, localContent);
     const copyMeta: LocalFileMeta = {
       path: copyPath,
