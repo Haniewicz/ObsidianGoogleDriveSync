@@ -605,9 +605,14 @@ export class SyncEngine {
     localManifest?: LocalSyncManifest,
     allowManualResolution = false
   ): Promise<boolean> {
+    await this.log("sync-engine-conflict-resolve-start", { path, manual: allowManualResolution });
     const remoteFile = await this.options.provider.download(path);
+    await this.log("sync-engine-conflict-remote-downloaded", {
+      path,
+      isText: remoteFile.isText,
+      size: typeof remoteFile.content === "string" ? byteSize(remoteFile.content) : remoteFile.content.byteLength
+    });
     const remoteData = typeof remoteFile.content === "string" ? new TextEncoder().encode(remoteFile.content).buffer : remoteFile.content;
-    await this.captureConflictBackup(path, localMeta, remoteMeta, remoteData);
     const policy = this.options.getConflictPolicy();
     if (policy === "prefer-local") {
       if (backupFiles) this.captureRemoteBackupContent(backupFiles, path, remoteMeta, remoteData);
@@ -619,6 +624,13 @@ export class SyncEngine {
       await this.downloadRemote(path, remoteMeta, index, counters, localManifest);
       return true;
     }
+    if (!allowManualResolution) {
+      await this.log("sync-engine-conflict-auto-keep-both", { path });
+      await this.keepBothConflict(path, localMeta, remoteMeta, remoteFile, filesFolderId, manifest, index, counters, localManifest);
+      return true;
+    }
+    await this.captureConflictBackup(path, localMeta, remoteMeta, remoteData);
+    await this.log("sync-engine-conflict-diagnostic-backup-created", { path });
     const isText = localMeta.isText && isLikelyText(path) && localMeta.size <= MAX_SNAPSHOT_BYTES && remoteData.byteLength <= MAX_SNAPSHOT_BYTES;
     if (isText) {
       const localText = await this.options.scanner.readText(path);

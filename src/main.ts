@@ -40,6 +40,7 @@ export default class GoogleDriveSyncPlugin extends Plugin {
   private dirtyPaths = new Set<string>();
   private log = createLogger(() => this.settings.debugMode);
   private logSessionId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  private lastCloudWatchSkipLogAt = 0;
 
   async onload() {
     await this.loadSettings();
@@ -456,15 +457,18 @@ export default class GoogleDriveSyncPlugin extends Plugin {
       !this.getStoredAuth() ||
       !this.isInitialSyncCompleted()
     ) {
-      await this.appendSyncLog("cloud-watch-skipped", {
-        cloudWatchRunning: this.cloudWatchRunning,
-        startupSyncRunning: this.startupSyncRunning,
-        syncRunning: this.syncRunning,
-        engineRunning: this.syncEngine.isRunning(),
-        normalUploadUnlocked: this.normalUploadUnlocked,
-        connected: this.getStoredAuth() !== undefined,
-        initialSyncCompleted: this.isInitialSyncCompleted()
-      });
+      if (Date.now() - this.lastCloudWatchSkipLogAt > 60000) {
+        this.lastCloudWatchSkipLogAt = Date.now();
+        await this.appendSyncLog("cloud-watch-skipped", {
+          cloudWatchRunning: this.cloudWatchRunning,
+          startupSyncRunning: this.startupSyncRunning,
+          syncRunning: this.syncRunning,
+          engineRunning: this.syncEngine.isRunning(),
+          normalUploadUnlocked: this.normalUploadUnlocked,
+          connected: this.getStoredAuth() !== undefined,
+          initialSyncCompleted: this.isInitialSyncCompleted()
+        });
+      }
       return;
     }
     this.cloudWatchRunning = true;
