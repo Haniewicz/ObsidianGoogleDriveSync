@@ -1,7 +1,7 @@
 import { App, Notice, TFile } from "obsidian";
 import { GoogleDriveClient } from "./drive";
 import { LocalVaultScanner } from "./scanner";
-import { ConflictPolicy, LocalFileMeta, PlannedDeletion, RemoteFileMeta, RemoteManifest, RemoteSyncCommand, SyncIndexEntry, SyncSummary } from "./types";
+import { BackupFileSource, BackupMode, ConflictPolicy, LocalFileMeta, PlannedDeletion, RemoteFileMeta, RemoteManifest, RemoteSyncCommand, SyncIndexEntry, SyncSummary } from "./types";
 import { byteSize, conflictPath, deletedCopyPath, isLikelyText, sha256Hex, unique, writeVaultFile } from "./utils";
 import { LargeDeletionModal, showConflictNotice } from "./modals";
 import { mergeText } from "./merge";
@@ -23,6 +23,8 @@ export type SyncEngineOptions = {
   getAppliedCommandIds: () => string[];
   setAppliedCommandIds: (ids: string[]) => Promise<void>;
   getBackupEnabled: () => boolean;
+  getBackupMode: () => BackupMode;
+  getBackupIntervalMinutes: () => number;
   getMaxBackups: () => number;
 };
 
@@ -54,11 +56,14 @@ export class SyncEngine {
     const counters: SyncCounters = { uploads: 0, downloads: 0, localDeletes: 0, remoteDeletes: 0, conflicts: 0, errors: 0 };
     const changedPaths: string[] = [];
     const deletedPaths: string[] = [];
+    const safetyBackupFiles: Record<string, BackupFileSource> = {};
+    const routineBackupFiles: Record<string, BackupFileSource> = {};
     try {
       const local = await this.options.scanner.scan();
       const state = await this.options.drive.loadRemoteState(this.options.getRemoteFolderName(), this.options.getVaultId());
       const commandSummary = await this.applyRemoteCommandIfNeeded(state, local, counters);
       if (commandSummary) return commandSummary;
+      const captureRoutineBackups = this.shouldCaptureRoutineBackups(state.manifest);
       const index = { ...this.options.getIndex() };
       const paths = unique([...Object.keys(local), ...Object.keys(state.manifest.files), ...Object.keys(index)]);
       const deletionPlan = this.planDeletions(paths, local, state.manifest, index);
@@ -79,12 +84,14 @@ export class SyncEngine {
 
         if (localMeta && remoteMeta && !remoteMeta.deleted && localMeta.hash !== lastHash && remoteMeta.hash === lastHash) {
           changedPaths.push(path);
+          if (captureRoutineBackups) await this.captureRemoteBackup(routineBackupFiles, path, remoteMeta);
           await this.uploadLocal(path, localMeta, state.filesFolderId, state.manifest, index, counters);
           continue;
         }
 
         if (localMeta && remoteMeta && !remoteMeta.deleted && localMeta.hash === lastHash && remoteMeta.hash !== lastHash) {
           changedPaths.push(path);
+          await this.captureLocalBackup(safetyBackupFiles, path, localMeta);
           await this.downloadRemote(path, remoteMeta, index, counters);
           continue;
         }
@@ -92,6 +99,7 @@ export class SyncEngine {
         if (localMeta && remoteMeta?.deleted && localMeta.hash === lastHash) {
           if (allowedDeletionKeys.has(`local:${path}`)) {
             deletedPaths.push(path);
+            await this.captureLocalBackup(safetyBackupFiles, path, localMeta);
             await this.safeLocalDelete(path, index, counters);
           }
           continue;
@@ -100,6 +108,7 @@ export class SyncEngine {
         if (!localMeta && remoteMeta && !remoteMeta.deleted && remoteMeta.hash === lastHash) {
           if (allowedDeletionKeys.has(`remote:${path}`)) {
             deletedPaths.push(path);
+            await this.captureRemoteBackup(safetyBackupFiles, path, remoteMeta);
             this.tombstoneRemote(path, state.manifest, index, counters);
           }
           continue;
@@ -124,14 +133,15 @@ export class SyncEngine {
 
         if (localMeta && remoteMeta && !remoteMeta.deleted && localMeta.hash !== lastHash && remoteMeta.hash !== lastHash) {
           changedPaths.push(path);
-          const resolved = await this.resolveConflict(path, localMeta, remoteMeta, state.filesFolderId, state.manifest, index, counters);
+          const resolved = await this.resolveConflict(path, localMeta, remoteMeta, state.filesFolderId, state.manifest, index, counters, safetyBackupFiles);
           if (!resolved) counters.conflicts += 1;
         }
       }
 
-      if (this.options.getBackupEnabled() && (changedPaths.length > 0 || deletedPaths.length > 0)) {
+      const backupFiles = this.backupFilesForSync(safetyBackupFiles, routineBackupFiles);
+      if (this.options.getBackupEnabled() && (Object.keys(backupFiles).length > 0 || deletedPaths.length > 0)) {
         try {
-          await this.options.drive.createBackup(state, changedPaths, deletedPaths, this.options.getDeviceId(), this.options.getDeviceName(), this.options.getMaxBackups());
+          await this.options.drive.createBackup(state, backupFiles, deletedPaths, this.options.getDeviceId(), this.options.getDeviceName(), this.options.getMaxBackups());
         } catch { /* backup failure must not abort sync */ }
       }
       await this.options.drive.saveManifest(state);
@@ -155,8 +165,11 @@ export class SyncEngine {
       await this.options.drive.createManifestSnapshot(state, this.options.getDeviceId(), this.options.getDeviceName());
       if (this.options.getBackupEnabled()) {
         try {
-          const allPaths = Object.keys(state.manifest.files).filter((p) => !state.manifest.files[p].deleted);
-          await this.options.drive.createBackup(state, allPaths, [], this.options.getDeviceId(), this.options.getDeviceName(), this.options.getMaxBackups());
+          const backupFiles: Record<string, BackupFileSource> = {};
+          for (const remote of Object.values(state.manifest.files)) {
+            if (!remote.deleted) await this.captureRemoteBackup(backupFiles, remote.path, remote);
+          }
+          await this.options.drive.createBackup(state, backupFiles, [], this.options.getDeviceId(), this.options.getDeviceName(), this.options.getMaxBackups());
         } catch { /* ignore */ }
       }
       for (const remote of Object.values(state.manifest.files)) {
@@ -202,8 +215,11 @@ export class SyncEngine {
       const state = await this.options.drive.loadRemoteState(this.options.getRemoteFolderName(), this.options.getVaultId());
       if (this.options.getBackupEnabled()) {
         try {
-          const allPaths = Object.keys(state.manifest.files).filter((p) => !state.manifest.files[p].deleted);
-          await this.options.drive.createBackup(state, allPaths, [], this.options.getDeviceId(), this.options.getDeviceName(), this.options.getMaxBackups());
+          const backupFiles: Record<string, BackupFileSource> = {};
+          for (const [path, meta] of Object.entries(local)) {
+            await this.captureLocalBackup(backupFiles, path, meta);
+          }
+          await this.options.drive.createBackup(state, backupFiles, [], this.options.getDeviceId(), this.options.getDeviceName(), this.options.getMaxBackups());
           await this.options.drive.saveManifest(state); // persist backup metadata before local reset
         } catch { /* ignore */ }
       }
@@ -241,6 +257,29 @@ export class SyncEngine {
     }).sort();
   }
 
+  async createManualBackup(label: string): Promise<void> {
+    if (this.running) throw new Error("Google Drive sync is already running.");
+    this.running = true;
+    try {
+      const local = await this.options.scanner.scan();
+      const state = await this.options.drive.loadRemoteState(this.options.getRemoteFolderName(), this.options.getVaultId());
+      const backupFiles: Record<string, BackupFileSource> = {};
+      for (const [path, meta] of Object.entries(local)) {
+        await this.captureLocalBackup(backupFiles, path, meta);
+      }
+      await this.options.drive.createManualBackup(
+        state,
+        backupFiles,
+        label,
+        this.options.getDeviceId(),
+        this.options.getDeviceName()
+      );
+      await this.options.drive.saveManifest(state);
+    } finally {
+      this.running = false;
+    }
+  }
+
   async restoreFromBackup(backupFileId: string): Promise<void> {
     if (this.running) throw new Error("Google Drive sync is already running.");
     this.running = true;
@@ -254,6 +293,86 @@ export class SyncEngine {
     } finally {
       this.running = false;
     }
+  }
+
+  async restoreFileFromBackup(backupFileId: string, path: string): Promise<void> {
+    if (this.running) throw new Error("Google Drive sync is already running.");
+    this.running = true;
+    try {
+      const data = await this.options.drive.loadBackupData(backupFileId);
+      const entry = data.changedFiles[path];
+      if (!entry) throw new Error("This file is not available in the selected backup.");
+
+      const content = await this.options.drive.downloadFile(entry.driveFileId);
+      await writeVaultFile(this.options.app.vault, path, isLikelyText(path) ? new TextDecoder().decode(content) : content);
+      await this.options.setIndex({});
+    } finally {
+      this.running = false;
+    }
+  }
+
+  private backupFilesForSync(
+    safetyFiles: Record<string, BackupFileSource>,
+    routineFiles: Record<string, BackupFileSource>
+  ): Record<string, BackupFileSource> {
+    const safetyCount = Object.keys(safetyFiles).length;
+    const routineCount = Object.keys(routineFiles).length;
+    if (routineCount === 0) return safetyFiles;
+
+    const mode = this.options.getBackupMode();
+    if (mode === "safety-only" && safetyCount === 0) return {};
+    if (mode === "safety-only") return safetyFiles;
+    if (mode === "timed" && safetyCount > 0) return { ...routineFiles, ...safetyFiles };
+    return { ...routineFiles, ...safetyFiles };
+  }
+
+  private shouldCaptureRoutineBackups(manifest: RemoteManifest): boolean {
+    const mode = this.options.getBackupMode();
+    if (mode === "every-sync") return true;
+    if (mode === "safety-only") return false;
+    const intervalMs = Math.max(1, this.options.getBackupIntervalMinutes()) * 60 * 1000;
+    const latestBackupAt = Math.max(0, ...(manifest.backups ?? []).map((backup) => backup.createdAt));
+    return latestBackupAt === 0 || Date.now() - latestBackupAt >= intervalMs;
+  }
+
+  private async captureLocalBackup(files: Record<string, BackupFileSource>, path: string, meta: LocalFileMeta): Promise<void> {
+    if (files[path]) return;
+    const file = this.options.app.vault.getAbstractFileByPath(path);
+    if (!(file instanceof TFile)) return;
+    const isText = meta.isText && isLikelyText(path);
+    const content = isText ? await this.options.app.vault.read(file) : await this.options.app.vault.readBinary(file);
+    files[path] = {
+      driveFileId: "",
+      hash: meta.hash,
+      size: meta.size,
+      mtime: meta.mtime,
+      content,
+      mimeType: this.mimeTypeFor(path, isText)
+    };
+  }
+
+  private async captureRemoteBackup(files: Record<string, BackupFileSource>, path: string, meta: RemoteFileMeta): Promise<void> {
+    if (files[path]) return;
+    const content = await this.options.drive.downloadFile(meta.driveFileId);
+    this.captureRemoteBackupContent(files, path, meta, content);
+  }
+
+  private captureRemoteBackupContent(files: Record<string, BackupFileSource>, path: string, meta: RemoteFileMeta, content: ArrayBuffer): void {
+    if (files[path]) return;
+    files[path] = {
+      driveFileId: "",
+      hash: meta.hash,
+      size: meta.size,
+      mtime: meta.mtime,
+      content,
+      mimeType: this.mimeTypeFor(path, isLikelyText(path))
+    };
+  }
+
+  private mimeTypeFor(path: string, isText: boolean): string {
+    if (!isText) return "application/octet-stream";
+    if (path.toLowerCase().endsWith(".md")) return "text/markdown; charset=utf-8";
+    return "text/plain; charset=utf-8";
   }
 
   private planDeletions(
@@ -326,15 +445,18 @@ export class SyncEngine {
     filesFolderId: string,
     manifest: RemoteManifest,
     index: Record<string, SyncIndexEntry>,
-    counters: SyncCounters
+    counters: SyncCounters,
+    backupFiles?: Record<string, BackupFileSource>
   ): Promise<boolean> {
     const remoteData = await this.options.drive.downloadFile(remoteMeta.driveFileId);
     const policy = this.options.getConflictPolicy();
     if (policy === "prefer-local") {
+      if (backupFiles) this.captureRemoteBackupContent(backupFiles, path, remoteMeta, remoteData);
       await this.uploadLocal(path, localMeta, filesFolderId, manifest, index, counters);
       return true;
     }
     if (policy === "prefer-remote") {
+      if (backupFiles) await this.captureLocalBackup(backupFiles, path, localMeta);
       await this.downloadRemote(path, remoteMeta, index, counters);
       return true;
     }
@@ -344,6 +466,7 @@ export class SyncEngine {
       const remoteText = new TextDecoder().decode(remoteData);
       const merged = mergeText(index[path].baseSnapshot, localText, remoteText);
       if (merged.clean) {
+        if (backupFiles) await this.captureLocalBackup(backupFiles, path, localMeta);
         await writeVaultFile(this.options.app.vault, path, merged.text);
         const hash = await sha256Hex(merged.text);
         const size = byteSize(merged.text);

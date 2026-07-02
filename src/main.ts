@@ -59,6 +59,8 @@ export default class GoogleDriveSyncPlugin extends Plugin {
       getAppliedCommandIds: () => this.pluginData.appliedCommandIds ?? [],
       setAppliedCommandIds: async (appliedCommandIds) => this.savePluginData({ appliedCommandIds }),
       getBackupEnabled: () => this.settings.backupEnabled,
+      getBackupMode: () => this.settings.backupMode,
+      getBackupIntervalMinutes: () => this.settings.backupIntervalMinutes,
       getMaxBackups: () => this.settings.maxBackups
     });
 
@@ -167,16 +169,40 @@ export default class GoogleDriveSyncPlugin extends Plugin {
     return state.manifest.backups ?? [];
   }
 
+  async getManualBackups(): Promise<import("./types").BackupMeta[]> {
+    const state = await this.drive.loadRemoteState(this.settings.remoteFolderName, this.getVaultId());
+    return state.manifest.manualBackups ?? [];
+  }
+
+  async createManualBackup(label: string): Promise<void> {
+    await this.syncEngine.createManualBackup(label);
+    new Notice(`Manual backup created: ${label}`);
+    this.onConnectionChange?.();
+  }
+
   async restoreFromBackup(backup: import("./types").BackupMeta): Promise<void> {
     await this.syncEngine.restoreFromBackup(backup.fileId);
     new Notice(`Vault restored from backup (${new Date(backup.createdAt).toLocaleString()}).`);
     this.onConnectionChange?.();
   }
 
+  async restoreFileFromBackup(backup: import("./types").BackupMeta, path: string): Promise<void> {
+    await this.syncEngine.restoreFileFromBackup(backup.fileId, path);
+    new Notice(`Restored ${path} from backup (${new Date(backup.createdAt).toLocaleString()}).`);
+    this.onConnectionChange?.();
+  }
+
   async deleteBackup(backup: import("./types").BackupMeta): Promise<void> {
-    await this.drive.trashFile(backup.fileId);
+    await this.drive.trashFile(backup.folderId ?? backup.fileId);
     const state = await this.drive.loadRemoteState(this.settings.remoteFolderName, this.getVaultId());
     state.manifest.backups = (state.manifest.backups ?? []).filter((b) => b.id !== backup.id);
+    await this.drive.saveManifest(state);
+  }
+
+  async deleteManualBackup(backup: import("./types").BackupMeta): Promise<void> {
+    await this.drive.trashFile(backup.folderId ?? backup.fileId);
+    const state = await this.drive.loadRemoteState(this.settings.remoteFolderName, this.getVaultId());
+    state.manifest.manualBackups = (state.manifest.manualBackups ?? []).filter((b) => b.id !== backup.id);
     await this.drive.saveManifest(state);
   }
 

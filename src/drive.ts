@@ -1,6 +1,6 @@
 import { GoogleAuth } from "./auth";
 import { requestGoogleUrl } from "./googleRequest";
-import { BackupData, BackupMeta, RemoteManifest, RemoteSnapshotMeta, RemoteState } from "./types";
+import { BackupData, BackupFileSource, BackupMeta, RemoteManifest, RemoteSnapshotMeta, RemoteState } from "./types";
 import { RequestQueue } from "./queue";
 import { encodeQuery } from "./utils";
 
@@ -10,6 +10,7 @@ const FOLDER_MIME = "application/vnd.google-apps.folder";
 const MANIFEST_NAME = ".obsidian-sync-manifest.json";
 const SNAPSHOTS_FOLDER_NAME = ".obsidian-sync-snapshots";
 const BACKUPS_FOLDER_NAME = ".obsidian-sync-backups";
+const MANUAL_BACKUPS_FOLDER_NAME = ".obsidian-sync-manual-backups";
 const MAX_SNAPSHOTS = 10;
 
 type DriveFile = {
@@ -103,7 +104,7 @@ export class GoogleDriveClient {
 
   async createBackup(
     state: RemoteState,
-    changedPaths: string[],
+    filesToBackUp: Record<string, BackupFileSource>,
     deletedPaths: string[],
     deviceId: string,
     deviceName: string,
@@ -113,30 +114,95 @@ export class GoogleDriveClient {
     const createdAt = Date.now();
     const id = `${createdAt}-${deviceId.slice(0, 8)}`;
     const safeName = deviceName.replace(/[^a-z0-9_-]+/gi, "-").replace(/^-+|-+$/g, "") || "device";
-    const name = `${new Date(createdAt).toISOString().replace(/[:.]/g, "-")}-${safeName}.json`;
+    const folderName = `${new Date(createdAt).toISOString().replace(/[:.]/g, "-")}-${safeName}`;
+    const name = `${folderName}.json`;
+    const backupFolderId = await this.ensureFolder(folderName, backupsFolderId);
 
-    const changedFiles: BackupData["changedFiles"] = {};
-    for (const path of changedPaths) {
-      const meta = state.manifest.files[path];
-      if (meta && !meta.deleted) {
-        changedFiles[path] = { driveFileId: meta.driveFileId, hash: meta.hash, size: meta.size, mtime: meta.mtime };
-      }
-    }
-
-    const backupData: BackupData = { v: 1, id, createdAt, deviceName, changedFiles, deletedPaths };
-    const created = await this.createFile(name, backupsFolderId, JSON.stringify(backupData, null, 2), "application/json");
+    const changedFiles = await this.createBackupContentFiles(backupFolderId, filesToBackUp);
+    const backupData: BackupData = { v: 1, id, createdAt, deviceName, kind: "auto", snapshotFiles: true, changedFiles, deletedPaths };
+    const created = await this.createFile(name, backupFolderId, JSON.stringify(backupData, null, 2), "application/json");
 
     const meta: BackupMeta = {
-      id, fileId: created.id, name, createdAt, deviceName,
+      id, fileId: created.id, folderId: backupFolderId, name, kind: "auto", createdAt, deviceName,
       changedCount: Object.keys(changedFiles).length,
       deletedCount: deletedPaths.length
     };
     const allBackups = [meta, ...(state.manifest.backups ?? [])];
     state.manifest.backups = allBackups.slice(0, maxBackups);
     for (const old of allBackups.slice(maxBackups)) {
-      await this.trashFile(old.fileId);
+      await this.trashFile(old.folderId ?? old.fileId);
     }
     return meta;
+  }
+
+  async createManualBackup(
+    state: RemoteState,
+    filesToBackUp: Record<string, BackupFileSource>,
+    label: string,
+    deviceId: string,
+    deviceName: string
+  ): Promise<BackupMeta> {
+    const manualBackupsFolderId = await this.ensureFolder(MANUAL_BACKUPS_FOLDER_NAME, state.rootFolderId);
+    const createdAt = Date.now();
+    const id = `${createdAt}-${deviceId.slice(0, 8)}`;
+    const safeLabel = this.safeName(label) || "manual-backup";
+    const safeDevice = this.safeName(deviceName) || "device";
+    const folderName = `${new Date(createdAt).toISOString().replace(/[:.]/g, "-")}-${safeLabel}-${safeDevice}`;
+    const name = `${folderName}.json`;
+    const backupFolderId = await this.ensureFolder(folderName, manualBackupsFolderId);
+
+    const changedFiles = await this.createBackupContentFiles(backupFolderId, filesToBackUp);
+    const backupData: BackupData = {
+      v: 1,
+      id,
+      createdAt,
+      deviceName,
+      label,
+      kind: "manual",
+      snapshotFiles: true,
+      changedFiles,
+      deletedPaths: []
+    };
+    const created = await this.createFile(name, backupFolderId, JSON.stringify(backupData, null, 2), "application/json");
+
+    const meta: BackupMeta = {
+      id,
+      fileId: created.id,
+      folderId: backupFolderId,
+      name,
+      label,
+      kind: "manual",
+      createdAt,
+      deviceName,
+      changedCount: Object.keys(changedFiles).length,
+      deletedCount: 0
+    };
+    state.manifest.manualBackups = [meta, ...(state.manifest.manualBackups ?? [])];
+    return meta;
+  }
+
+  private async createBackupContentFiles(folderId: string, filesToBackUp: Record<string, BackupFileSource>): Promise<BackupData["changedFiles"]> {
+    const changedFiles: BackupData["changedFiles"] = {};
+    for (const [path, source] of Object.entries(filesToBackUp)) {
+      const backupFileName = this.backupContentName(path);
+      const createdBackupFile = await this.createFile(backupFileName, folderId, source.content, source.mimeType);
+      changedFiles[path] = {
+        driveFileId: createdBackupFile.id,
+        hash: source.hash,
+        size: source.size,
+        mtime: source.mtime
+      };
+    }
+    return changedFiles;
+  }
+
+  private backupContentName(path: string): string {
+    const safe = this.safeName(path).replace(/^-+|-+$/g, "") || "file";
+    return safe.length > 160 ? safe.slice(-160) : safe;
+  }
+
+  private safeName(value: string): string {
+    return value.replace(/[^a-z0-9._-]+/gi, "-").replace(/^-+|-+$/g, "");
   }
 
   async loadBackupData(fileId: string): Promise<BackupData> {

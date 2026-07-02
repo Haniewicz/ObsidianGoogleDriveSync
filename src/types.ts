@@ -18,6 +18,8 @@ export type GoogleDriveSyncSettings = {
   ignoredPaths: string;
   debugMode: boolean;
   backupEnabled: boolean;
+  backupMode: BackupMode;
+  backupIntervalMinutes: number;
   maxBackups: number;
 };
 
@@ -31,6 +33,7 @@ export type StoredAuth = {
 
 export type ConflictPolicy = "keep-both" | "prefer-local" | "prefer-remote";
 export type InitialSyncDirection = "cloud-to-local" | "local-to-cloud";
+export type BackupMode = "safety-only" | "timed" | "every-sync";
 
 export type SyncStatusState = "disconnected" | "idle" | "syncing" | "error";
 
@@ -75,6 +78,7 @@ export type RemoteManifest = {
   command?: RemoteSyncCommand;
   snapshots?: RemoteSnapshotMeta[];
   backups?: BackupMeta[];
+  manualBackups?: BackupMeta[];
 };
 
 export type RemoteSyncCommand = {
@@ -101,10 +105,18 @@ export type BackupFileEntry = {
   mtime?: number;
 };
 
+export type BackupFileSource = BackupFileEntry & {
+  content: string | ArrayBuffer;
+  mimeType: string;
+};
+
 export type BackupMeta = {
   id: string;
   fileId: string;
+  folderId?: string;
   name: string;
+  label?: string;
+  kind?: "auto" | "manual";
   createdAt: number;
   deviceName: string;
   changedCount: number;
@@ -116,6 +128,10 @@ export type BackupData = {
   id: string;
   createdAt: number;
   deviceName: string;
+  label?: string;
+  kind?: "auto" | "manual";
+  /** True for backups that store independent copies of file contents instead of live synced file IDs */
+  snapshotFiles?: boolean;
   /** Only files whose hash changed compared to the previous backup / last known state */
   changedFiles: Record<string, BackupFileEntry>;
   /** Paths that were deleted in this sync */
@@ -200,5 +216,7 @@ export const DEFAULT_SETTINGS: GoogleDriveSyncSettings = {
   ignoredPaths: "",
   debugMode: false,
   backupEnabled: true,
+  backupMode: "timed",
+  backupIntervalMinutes: 30,
   maxBackups: 10
 };
