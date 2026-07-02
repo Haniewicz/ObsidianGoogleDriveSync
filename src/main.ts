@@ -32,6 +32,7 @@ export default class GoogleDriveSyncPlugin extends Plugin {
   private cloudWatchRunning = false;
   private startupSyncRunning = false;
   private normalUploadUnlocked = false;
+  private ignoreVaultEventsUntil = 0;
   private dirtyPaths = new Set<string>();
   private log = createLogger(() => this.settings.debugMode);
 
@@ -273,6 +274,10 @@ export default class GoogleDriveSyncPlugin extends Plugin {
   }
 
   async syncNow(manual = false) {
+    if (this.syncEngine?.isRunning()) {
+      if (manual) new Notice("Google Drive sync is already running.");
+      return;
+    }
     if (!this.getStoredAuth()) {
       if (manual) new Notice("Connect Google Drive before syncing.");
       await this.setSyncStatus({ state: "disconnected" });
@@ -285,6 +290,7 @@ export default class GoogleDriveSyncPlugin extends Plugin {
     }
     const startedAt = Date.now();
     await this.setSyncStatus({ state: "syncing", lastStartedAt: startedAt, lastError: undefined });
+    this.ignoreVaultEventsUntil = Date.now() + 2000;
     try {
       this.log("Starting sync", { dirtyCount: this.dirtyPaths.size });
       this.dirtyPaths.clear();
@@ -294,6 +300,8 @@ export default class GoogleDriveSyncPlugin extends Plugin {
       new Notice(error instanceof Error ? error.message : "Google Drive sync failed.");
       this.log("Sync failed", error instanceof Error ? error.message : String(error));
       await this.recordSyncError(error);
+    } finally {
+      this.ignoreVaultEventsUntil = Date.now() + 2000;
     }
   }
 
@@ -472,9 +480,11 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 
   private registerVaultEvents() {
     const schedule = (file?: TAbstractFile) => {
+      if (this.shouldIgnoreVaultEvent(file?.path)) return;
       if (file?.path) this.dirtyPaths.add(file.path);
       if (!this.settings.autoSyncEnabled || !this.getStoredAuth() || !this.isInitialSyncCompleted()) return;
       if (!this.normalUploadUnlocked) return;
+      if (this.syncEngine.isRunning()) return;
       if (this.debounceTimer !== undefined) window.clearTimeout(this.debounceTimer);
       const delayMs = Math.max(0, this.settings.syncDebounceSeconds) * 1000;
       this.debounceTimer = window.setTimeout(() => void this.syncNow(), delayMs);
@@ -483,9 +493,15 @@ export default class GoogleDriveSyncPlugin extends Plugin {
     this.registerEvent(this.app.vault.on("modify", schedule));
     this.registerEvent(this.app.vault.on("delete", schedule));
     this.registerEvent(this.app.vault.on("rename", (file, oldPath) => {
+      if (this.shouldIgnoreVaultEvent(oldPath) && this.shouldIgnoreVaultEvent(file.path)) return;
       this.dirtyPaths.add(oldPath);
       schedule(file);
     }));
+  }
+
+  private shouldIgnoreVaultEvent(path?: string): boolean {
+    if (!path) return Date.now() < this.ignoreVaultEventsUntil;
+    return Date.now() < this.ignoreVaultEventsUntil || path.startsWith(".sync/") || path.startsWith(".trash/");
   }
 
   private getVaultId(): string {

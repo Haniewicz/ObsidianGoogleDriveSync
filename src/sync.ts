@@ -6,7 +6,7 @@ import { OfflineSyncQueue } from "./offlineQueue";
 import { GoogleDriveProvider } from "./provider";
 import { LocalVaultScanner } from "./scanner";
 import { BackupFileSource, BackupMode, ConflictPolicy, LocalFile, LocalFileMeta, LocalSyncManifest, PlannedDeletion, RemoteFileMeta, RemoteManifest, RemoteSyncCommand, SyncIndexEntry, SyncQueueItem, SyncSummary } from "./types";
-import { byteSize, conflictPath, deletedCopyPath, isLikelyText, sha256Hex, unique, writeVaultFile } from "./utils";
+import { byteSize, deletedCopyPath, isLikelyText, safeCollisionPath, sha256Hex, unique, writeVaultFile } from "./utils";
 import { LargeDeletionModal, showConflictNotice, showManualConflictModal } from "./modals";
 
 const MAX_SNAPSHOT_BYTES = 1024 * 1024;
@@ -592,7 +592,7 @@ export class SyncEngine {
         return true;
       }
     }
-    const copyPath = conflictPath(path, "Google Drive");
+    const copyPath = safeCollisionPath(path);
     await writeVaultFile(this.options.app.vault, copyPath, isLikelyText(path) ? new TextDecoder().decode(remoteData) : remoteData);
     return false;
   }
