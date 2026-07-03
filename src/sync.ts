@@ -7,7 +7,7 @@ import { GoogleDriveProvider } from "./provider";
 import { LocalVaultScanner } from "./scanner";
 import { BackupFileSource, BackupMode, ConflictPolicy, LocalFile, LocalFileMeta, LocalSyncManifest, PlannedDeletion, RemoteFile, RemoteFileMeta, RemoteManifest, RemoteSyncCommand, SyncIndexEntry, SyncQueueItem, SyncSummary } from "./types";
 import { byteSize, conflictPath, deletedCopyPath, getExtension, isLikelyText, sha256Hex, unique, writeVaultFile } from "./utils";
-import { LargeDeletionModal, showConflictNotice, showManualConflictModal } from "./modals";
+import { LargeDeletionModal, showConflictNotice, showManualConflictModal, showRemoteDeleteConflictModal } from "./modals";
 
 const MAX_SNAPSHOT_BYTES = 1024 * 1024;
 
@@ -119,6 +119,38 @@ export class SyncEngine {
           changedPaths.push(path);
           await this.captureLocalBackup(safetyBackupFiles, path, localMeta);
           await this.downloadRemote(path, remoteMeta, index, counters, localManifest);
+          continue;
+        }
+
+        if (localMeta && remoteMeta?.deleted && localMeta.hash !== baseHash) {
+          changedPaths.push(path);
+          await this.log("sync-engine-delete-conflict-detected", {
+            path,
+            localHash: localMeta.hash,
+            baseHash,
+            deletedBy: remoteMeta.deviceName ?? remoteMeta.deviceId,
+            deletedAt: remoteMeta.deletedAt ?? remoteMeta.updatedAt
+          });
+          const choice = await showRemoteDeleteConflictModal(
+            this.options.app,
+            path,
+            remoteMeta.deviceName ?? remoteMeta.deviceId ?? "another device",
+            remoteMeta.deletedAt ?? remoteMeta.updatedAt ?? null
+          );
+          if (choice === "keep-local") {
+            await this.log("sync-engine-delete-conflict-keep-local", { path });
+            await this.uploadLocal(path, localMeta, state.filesFolderId, state.manifest, index, counters, localManifest);
+            continue;
+          }
+          if (choice === "delete-local") {
+            await this.log("sync-engine-delete-conflict-delete-local", { path });
+            deletedPaths.push(path);
+            await this.captureLocalBackup(safetyBackupFiles, path, localMeta);
+            await this.safeLocalDelete(path, index, counters, localManifest);
+            continue;
+          }
+          await this.log("sync-engine-delete-conflict-cancelled", { path });
+          counters.conflicts += 1;
           continue;
         }
 

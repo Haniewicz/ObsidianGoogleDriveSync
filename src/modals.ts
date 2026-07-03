@@ -1,7 +1,7 @@
 import { App, Modal, Notice, Setting, TFile } from "obsidian";
 import { DeviceFlowSession } from "./auth";
 import { AuthTransferPayload, buildTransferUrl, decryptAuth, encryptAuth, generateQRCodeDataUrl } from "./authTransfer";
-import { BackupData, BackupMeta, InitialSyncDirection, ManualConflictChoice, ManualConflictDetails, PlannedDeletion, RemoteCleanupCandidate, StoredAuth } from "./types";
+import { BackupData, BackupMeta, InitialSyncDirection, ManualConflictChoice, ManualConflictDetails, PlannedDeletion, RemoteCleanupCandidate, RemoteDeleteConflictChoice, StoredAuth } from "./types";
 
 export class DeviceFlowModal extends Modal {
   private timerId?: number;
@@ -320,6 +320,34 @@ export function showManualConflictModal(app: App, details: ManualConflictDetails
         diffEl.toggleClass("obsidian-google-sync-hidden", visible);
         button.setButtonText(visible ? "Show Diff" : "Hide Diff");
       }))
+      .addButton((button) => button.setButtonText("Cancel").onClick(() => finish("cancel")));
+    actions.settingEl.addClass("obsidian-google-sync-conflict-actions");
+    modal.onClose = () => {
+      finish("cancel", false);
+      modal.contentEl.empty();
+    };
+    modal.open();
+  });
+}
+
+export function showRemoteDeleteConflictModal(app: App, path: string, deviceName: string, deletedAt: number | null): Promise<RemoteDeleteConflictChoice> {
+  return new Promise((resolve) => {
+    const modal = new Modal(app);
+    let settled = false;
+    const finish = (value: RemoteDeleteConflictChoice, close = true) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+      if (close) modal.close();
+    };
+    modal.titleEl.setText("Google Drive delete conflict");
+    modal.contentEl.createEl("p", { text: path, cls: "obsidian-google-sync-status-row" });
+    modal.contentEl.createEl("p", {
+      text: `This file was deleted on ${deviceName}, but this device has local changes. Deleted: ${deletedAt ? new Date(deletedAt).toLocaleString() : "unknown"}.`
+    });
+    const actions = new Setting(modal.contentEl)
+      .addButton((button) => button.setButtonText("Keep Local").setCta().onClick(() => finish("keep-local")))
+      .addButton((button) => button.setButtonText("Delete Local").setWarning().onClick(() => finish("delete-local")))
       .addButton((button) => button.setButtonText("Cancel").onClick(() => finish("cancel")));
     actions.settingEl.addClass("obsidian-google-sync-conflict-actions");
     modal.onClose = () => {

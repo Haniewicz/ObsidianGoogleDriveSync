@@ -261,6 +261,7 @@ export type ManualConflictDetails = {
 };
 
 export type ManualConflictChoice = "keep-local" | "keep-remote" | "keep-both" | "cancel";
+export type RemoteDeleteConflictChoice = "keep-local" | "delete-local" | "cancel";
 
 export function defaultIgnoredPaths(configDir: string): string {
   const normalizedConfigDir = configDir.replace(/\/+$/, "");

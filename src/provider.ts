@@ -56,7 +56,7 @@ export class GoogleDriveProvider implements SyncProvider {
       file.content,
       mimeType(file.path, file.isText),
       state.filesFolderId,
-      existing?.driveFileId
+      existing?.deleted ? undefined : existing?.driveFileId
     );
     state.manifest.files[file.path] = {
       path: file.path,
