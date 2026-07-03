@@ -4,12 +4,12 @@ import { decodeTransferPayload } from "./authTransfer";
 import { GoogleDriveClient } from "./drive";
 import { OfflineSyncQueue } from "./offlineQueue";
 import { GoogleDriveProvider } from "./provider";
-import { AuthExportModal, DeviceFlowModal, chooseInitialSyncDirection, chooseLocalFilesToKeep, confirmDangerAction, confirmResetIndex, showAuthImportModal } from "./modals";
+import { AuthExportModal, DeviceFlowModal, chooseInitialSyncDirection, chooseLocalFilesToKeep, chooseRemoteCleanupCandidates, confirmDangerAction, confirmResetIndex, showAuthImportModal } from "./modals";
 import { RequestQueue } from "./queue";
 import { LocalVaultScanner } from "./scanner";
 import { GoogleDriveSyncSettingTab } from "./settings";
 import { SyncEngine } from "./sync";
-import { DEFAULT_SETTINGS, GoogleDriveSyncSettings, InitialSyncDirection, PluginData, RemoteSnapshotMeta, StoredAuth, StoredPluginData, SyncStatus, SyncSummary, defaultIgnoredPaths } from "./types";
+import { DEFAULT_SETTINGS, GoogleDriveSyncSettings, InitialSyncDirection, PluginData, RemoteCleanupCandidate, RemoteSnapshotMeta, StoredAuth, StoredPluginData, SyncStatus, SyncSummary, defaultIgnoredPaths } from "./types";
 import { createLogger, ignoredPatternsFromSettings, isIgnored, sanitizeLogValue } from "./utils";
 
 const LOCAL_SYNC_LOG_PATH = ".sync/google-drive-vault-sync.log";
@@ -372,6 +372,68 @@ export default class GoogleDriveSyncPlugin extends Plugin {
     await this.app.workspace.getLeaf(false).openFile(target);
   }
 
+  async cleanRemoteDuplicates() {
+    if (this.syncRunning || this.syncEngine?.isRunning() || this.startupSyncRunning) {
+      new Notice("Wait for the current sync to finish before cleaning Google Drive.");
+      return;
+    }
+    if (!this.getStoredAuth()) {
+      new Notice("Connect Google Drive before cleaning duplicates.");
+      return;
+    }
+    await this.appendSyncLog("remote-cleanup-start");
+    try {
+      const state = await this.drive.loadRemoteState(this.settings.remoteFolderName, this.getVaultId());
+      const remoteFiles = await this.drive.listVaultFiles(state.filesFolderId);
+      const activeByPath = new Map<string, string>();
+      const activeIds = new Set<string>();
+      for (const file of Object.values(state.manifest.files)) {
+        if (file.deleted) continue;
+        activeByPath.set(file.path, file.driveFileId);
+        activeIds.add(file.driveFileId);
+      }
+      const candidates: RemoteCleanupCandidate[] = remoteFiles
+        .filter((file) => !activeIds.has(file.id))
+        .map((file) => {
+          const keptFileId = activeByPath.get(file.path);
+          return {
+            id: file.id,
+            path: file.path,
+            name: file.name,
+            modifiedTime: file.modifiedTime ? Date.parse(file.modifiedTime) : null,
+            size: file.size !== undefined ? Number(file.size) : undefined,
+            reason: keptFileId ? "duplicate" as const : "orphan" as const,
+            keptFileId
+          };
+        })
+        .sort((a, b) => a.path.localeCompare(b.path) || (b.modifiedTime ?? 0) - (a.modifiedTime ?? 0));
+
+      await this.appendSyncLog("remote-cleanup-scanned", {
+        remoteFiles: remoteFiles.length,
+        candidates: candidates.length,
+        duplicates: candidates.filter((candidate) => candidate.reason === "duplicate").length,
+        orphans: candidates.filter((candidate) => candidate.reason === "orphan").length
+      });
+      if (candidates.length === 0) {
+        new Notice("No hidden Google Drive duplicates found.");
+        return;
+      }
+      const selected = await chooseRemoteCleanupCandidates(this.app, candidates);
+      if (!selected || selected.length === 0) {
+        await this.appendSyncLog("remote-cleanup-cancelled", { candidates: candidates.length });
+        return;
+      }
+      for (const candidate of selected) {
+        await this.drive.trashFile(candidate.id);
+      }
+      await this.appendSyncLog("remote-cleanup-finished", { trashed: selected.length });
+      new Notice(`Moved ${selected.length} hidden Google Drive file${selected.length === 1 ? "" : "s"} to trash.`);
+    } catch (error) {
+      await this.appendSyncLog("remote-cleanup-error", this.errorDetails(error));
+      new Notice(error instanceof Error ? error.message : "Google Drive cleanup failed.");
+    }
+  }
+
   async resetCloudFromLocal() {
     await this.requireConnectedForDangerAction();
     await this.setSyncStatus({ state: "syncing", lastStartedAt: Date.now(), lastError: undefined });
@@ -543,6 +605,11 @@ export default class GoogleDriveSyncPlugin extends Plugin {
       name: "Open Daily Note Safely",
       icon: "calendar-check",
       callback: () => void this.openDailyNoteSafely()
+    });
+    this.addCommand({
+      id: "clean-remote-duplicates",
+      name: "Clean hidden Google Drive duplicates",
+      callback: () => void this.cleanRemoteDuplicates()
     });
     this.addCommand({
       id: "reset-local-sync-index",

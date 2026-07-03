@@ -236,6 +236,16 @@ export type RemoteState = {
   manifest: RemoteManifest;
 };
 
+export type RemoteCleanupCandidate = {
+  id: string;
+  path: string;
+  name: string;
+  modifiedTime: number | null;
+  size?: number;
+  reason: "duplicate" | "orphan";
+  keptFileId?: string;
+};
+
 export type PlannedDeletion = {
   path: string;
   direction: "local" | "remote";

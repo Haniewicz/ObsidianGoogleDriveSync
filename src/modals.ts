@@ -1,7 +1,7 @@
 import { App, Modal, Notice, Setting, TFile } from "obsidian";
 import { DeviceFlowSession } from "./auth";
 import { AuthTransferPayload, buildTransferUrl, decryptAuth, encryptAuth, generateQRCodeDataUrl } from "./authTransfer";
-import { BackupData, BackupMeta, InitialSyncDirection, ManualConflictChoice, ManualConflictDetails, PlannedDeletion, StoredAuth } from "./types";
+import { BackupData, BackupMeta, InitialSyncDirection, ManualConflictChoice, ManualConflictDetails, PlannedDeletion, RemoteCleanupCandidate, StoredAuth } from "./types";
 
 export class DeviceFlowModal extends Modal {
   private timerId?: number;
@@ -222,6 +222,57 @@ export function chooseLocalFilesToKeep(app: App, paths: string[]): Promise<strin
     new Setting(modal.contentEl)
       .addButton((button) => button.setButtonText("Keep selected").setCta().onClick(() => finish(Array.from(selected))))
       .addButton((button) => button.setButtonText("Move all to trash").setWarning().onClick(() => finish([])))
+      .addButton((button) => button.setButtonText("Cancel").onClick(() => finish(null)));
+    modal.onClose = () => {
+      finish(null, false);
+      modal.contentEl.empty();
+    };
+    modal.open();
+  });
+}
+
+export function chooseRemoteCleanupCandidates(app: App, candidates: RemoteCleanupCandidate[]): Promise<RemoteCleanupCandidate[] | null> {
+  return new Promise((resolve) => {
+    const modal = new Modal(app);
+    const selected = new Set(candidates.map((candidate) => candidate.id));
+    let settled = false;
+    const finish = (value: RemoteCleanupCandidate[] | null, close = true) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+      if (close) modal.close();
+    };
+    modal.titleEl.setText("Clean Google Drive duplicates?");
+    modal.contentEl.createEl("p", {
+      text: "These remote files are not referenced by the sync manifest, so Obsidian will not show them. Selected files will be moved to Google Drive trash."
+    });
+    const search = modal.contentEl.createEl("input", { type: "search", placeholder: "Search files" });
+    search.addClass("obsidian-google-sync-search");
+    const list = modal.contentEl.createDiv("google-drive-sync-deletion-list");
+    const render = () => {
+      list.empty();
+      const query = search.value.toLowerCase();
+      for (const candidate of candidates.filter((item) => item.path.toLowerCase().includes(query))) {
+        const desc = [
+          candidate.reason === "duplicate" ? "Duplicate of manifest file" : "Not in manifest",
+          candidate.modifiedTime ? `modified ${new Date(candidate.modifiedTime).toLocaleString()}` : undefined,
+          candidate.size !== undefined ? `${candidate.size} bytes` : undefined
+        ].filter(Boolean).join("; ");
+        new Setting(list)
+          .setName(candidate.path)
+          .setDesc(desc)
+          .addToggle((toggle) => toggle.setValue(selected.has(candidate.id)).onChange((value) => {
+            if (value) selected.add(candidate.id);
+            else selected.delete(candidate.id);
+          }));
+      }
+    };
+    search.addEventListener("input", render);
+    render();
+    new Setting(modal.contentEl)
+      .addButton((button) => button.setButtonText("Move selected to trash").setWarning().onClick(() => {
+        finish(candidates.filter((candidate) => selected.has(candidate.id)));
+      }))
       .addButton((button) => button.setButtonText("Cancel").onClick(() => finish(null)));
     modal.onClose = () => {
       finish(null, false);
