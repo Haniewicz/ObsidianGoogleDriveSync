@@ -122,7 +122,14 @@ export class SyncEngine {
           continue;
         }
 
-        if (localMeta && remoteMeta?.deleted && localMeta.hash !== baseHash) {
+        if (localMeta && remoteMeta?.deleted && (baseHash === null || entry?.deleted || record?.deleted)) {
+          changedPaths.push(path);
+          await this.log("sync-engine-remote-deleted-local-recreated", { path, baseHash, indexDeleted: entry?.deleted, recordDeleted: record?.deleted });
+          await this.uploadLocal(path, localMeta, state.filesFolderId, state.manifest, index, counters, localManifest);
+          continue;
+        }
+
+        if (localMeta && remoteMeta?.deleted && baseHash !== null && localMeta.hash !== baseHash) {
           changedPaths.push(path);
           await this.log("sync-engine-delete-conflict-detected", {
             path,
