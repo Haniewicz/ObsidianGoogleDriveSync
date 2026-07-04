@@ -249,7 +249,7 @@ export class SyncEngine {
     const counters: SyncCounters = { uploads: 0, downloads: 0, localDeletes: 0, remoteDeletes: 0, conflicts: 0, errors: 0 };
     try {
       const local = await this.options.scanner.scan();
-      const state = await this.options.drive.loadRemoteState(this.options.getRemoteFolderName(), this.options.getVaultId());
+      const state = await this.options.provider.prepare();
       await this.options.drive.createManifestSnapshot(state, this.options.getDeviceId(), this.options.getDeviceName());
       if (this.options.getBackupEnabled()) {
         try {
@@ -300,7 +300,7 @@ export class SyncEngine {
     const counters: SyncCounters = { uploads: 0, downloads: 0, localDeletes: 0, remoteDeletes: 0, conflicts: 0, errors: 0 };
     try {
       const local = await this.options.scanner.scan();
-      const state = await this.options.drive.loadRemoteState(this.options.getRemoteFolderName(), this.options.getVaultId());
+      const state = await this.options.provider.prepare();
       if (this.options.getBackupEnabled()) {
         try {
           const backupFiles: Record<string, BackupFileSource> = {};
