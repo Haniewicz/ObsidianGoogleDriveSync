@@ -251,6 +251,16 @@ export type PlannedDeletion = {
   direction: "local" | "remote";
 };
 
+export type LargeDeletionAction = "delete" | "keep-local" | "keep-both" | "keep-remote";
+
+export type LargeDeletionDecision = PlannedDeletion & {
+  action: LargeDeletionAction;
+};
+
+export type LargeDeletionReviewResult = {
+  decisions: LargeDeletionDecision[];
+};
+
 export type ManualConflictDetails = {
   path: string;
   localText: string;

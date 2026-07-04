@@ -1,7 +1,7 @@
 import { App, Modal, Notice, Setting, TFile } from "obsidian";
 import { DeviceFlowSession } from "./auth";
 import { AuthTransferPayload, buildTransferUrl, decryptAuth, encryptAuth, generateQRCodeDataUrl } from "./authTransfer";
-import { BackupData, BackupMeta, InitialSyncDirection, ManualConflictChoice, ManualConflictDetails, PlannedDeletion, RemoteCleanupCandidate, RemoteDeleteConflictChoice, StoredAuth } from "./types";
+import { BackupData, BackupMeta, InitialSyncDirection, LargeDeletionAction, LargeDeletionDecision, LargeDeletionReviewResult, ManualConflictChoice, ManualConflictDetails, PlannedDeletion, RemoteCleanupCandidate, RemoteDeleteConflictChoice, StoredAuth } from "./types";
 
 export class DeviceFlowModal extends Modal {
   private timerId?: number;
@@ -55,12 +55,13 @@ export class DeviceFlowModal extends Modal {
 
 export class LargeDeletionModal extends Modal {
   private selected = new Set<string>();
+  private decisions = new Map<string, LargeDeletionAction>();
 
   constructor(
     app: App,
     private deletions: PlannedDeletion[],
     private percent: number,
-    private resolve: (paths: PlannedDeletion[] | null) => void
+    private resolve: (result: LargeDeletionReviewResult | null) => void
   ) {
     super(app);
   }
@@ -72,29 +73,71 @@ export class LargeDeletionModal extends Modal {
     contentEl.createEl("p", { text: `${this.deletions.length} synced files (${this.percent.toFixed(1)}%) are planned for deletion.` });
     const search = contentEl.createEl("input", { type: "search", placeholder: "Search files" });
     const list = contentEl.createDiv("google-drive-sync-deletion-list");
+    const visibleDeletions = () => {
+      const query = search.value.toLowerCase();
+      return this.deletions.filter((item) => item.path.toLowerCase().includes(query));
+    };
     const render = () => {
       list.empty();
-      const query = search.value.toLowerCase();
-      for (const deletion of this.deletions.filter((item) => item.path.toLowerCase().includes(query))) {
+      for (const deletion of visibleDeletions()) {
+        const deletionKey = key(deletion);
+        const action = this.decisions.get(deletionKey) ?? "delete";
         new Setting(list)
           .setName(deletion.path)
-          .setDesc(deletion.direction === "local" ? "Local safe delete" : "Remote tombstone")
-          .addToggle((toggle) => toggle.setValue(this.selected.has(key(deletion))).onChange((value) => {
-            if (value) this.selected.add(key(deletion));
-            else this.selected.delete(key(deletion));
-          }));
+          .setDesc(`${deletion.direction === "local" ? "Local file would be deleted" : "Google Drive file would be deleted"}; action: ${largeDeletionActionLabel(action)}`)
+          .addToggle((toggle) => toggle.setValue(this.selected.has(deletionKey)).onChange((value) => {
+            if (value) this.selected.add(deletionKey);
+            else this.selected.delete(deletionKey);
+          }))
+          .addDropdown((dropdown) => {
+            addLargeDeletionActionOptions(dropdown);
+            dropdown.setValue(action).onChange((value) => {
+              this.decisions.set(deletionKey, value as LargeDeletionAction);
+              render();
+            });
+          });
       }
     };
     search.addEventListener("input", render);
     render();
+    let bulkAction: LargeDeletionAction = "delete";
     new Setting(contentEl)
-      .addButton((button) => button.setButtonText("Delete selected").setCta().onClick(() => {
-        const chosen = this.deletions.filter((item) => this.selected.has(key(item)));
-        this.resolve(chosen);
+      .addButton((button) => button.setButtonText("Select all files").onClick(() => {
+        for (const deletion of this.deletions) this.selected.add(key(deletion));
+        render();
+      }))
+      .addButton((button) => button.setButtonText("Clear selection").onClick(() => {
+        this.selected.clear();
+        render();
+      }));
+    new Setting(contentEl)
+      .setName("Apply action to selected")
+      .addDropdown((dropdown) => {
+        addLargeDeletionActionOptions(dropdown);
+        dropdown.setValue(bulkAction).onChange((value) => {
+          bulkAction = value as LargeDeletionAction;
+        });
+      })
+      .addButton((button) => button.setButtonText("Apply").setCta().onClick(() => {
+        for (const deletion of this.deletions) {
+          const deletionKey = key(deletion);
+          if (this.selected.has(deletionKey)) this.decisions.set(deletionKey, bulkAction);
+        }
+        render();
+      }));
+    new Setting(contentEl)
+      .addButton((button) => button.setButtonText("Use selected actions").setCta().onClick(() => {
+        const decisions = this.deletions
+          .filter((item) => this.selected.has(key(item)))
+          .map((item): LargeDeletionDecision => ({
+            ...item,
+            action: this.decisions.get(key(item)) ?? "delete"
+          }));
+        this.resolve({ decisions });
         this.close();
       }))
       .addButton((button) => button.setButtonText("Skip deletions").onClick(() => {
-        this.resolve([]);
+        this.resolve({ decisions: [] });
         this.close();
       }))
       .addButton((button) => button.setButtonText("Cancel sync").onClick(() => {
@@ -360,6 +403,21 @@ export function showRemoteDeleteConflictModal(app: App, path: string, deviceName
 
 function key(deletion: PlannedDeletion): string {
   return `${deletion.direction}:${deletion.path}`;
+}
+
+function addLargeDeletionActionOptions(dropdown: import("obsidian").DropdownComponent): void {
+  dropdown
+    .addOption("delete", "Delete")
+    .addOption("keep-local", "Keep local")
+    .addOption("keep-both", "Keep both")
+    .addOption("keep-remote", "Keep remote");
+}
+
+function largeDeletionActionLabel(action: LargeDeletionAction): string {
+  if (action === "keep-local") return "keep local";
+  if (action === "keep-both") return "keep both";
+  if (action === "keep-remote") return "keep remote";
+  return "delete";
 }
 
 // ---------------------------------------------------------------------------
