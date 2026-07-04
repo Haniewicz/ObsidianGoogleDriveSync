@@ -1,4 +1,4 @@
-import { TFile, Vault, normalizePath } from "obsidian";
+import { TFile, TFolder, Vault, normalizePath } from "obsidian";
 
 const TEXT_EXTENSIONS = new Set([
   "md",
@@ -77,13 +77,19 @@ export function byteSize(data: string | ArrayBuffer): number {
 
 export async function ensureFolder(vault: Vault, path: string): Promise<void> {
   const normalized = normalizeVaultPath(path);
-  if (!normalized || vault.getAbstractFileByPath(normalized)) return;
+  if (!normalized) return;
   const parts = normalized.split("/");
   let current = "";
   for (const part of parts) {
     current = current ? `${current}/${part}` : part;
-    if (!vault.getAbstractFileByPath(current)) {
+    const existing = vault.getAbstractFileByPath(current);
+    if (existing instanceof TFolder) continue;
+    if (existing) throw new Error(`Path collision: ${current} is a file, not a folder.`);
+    try {
       await vault.createFolder(current);
+    } catch (error) {
+      if (vault.getAbstractFileByPath(current) instanceof TFolder) continue;
+      throw error;
     }
   }
 }
@@ -96,15 +102,38 @@ export function parentFolder(path: string): string {
 export async function writeVaultFile(vault: Vault, path: string, data: string | ArrayBuffer): Promise<void> {
   const normalized = normalizeVaultPath(path);
   const folder = parentFolder(normalized);
-  if (folder) await ensureFolder(vault, folder);
+  try {
+    if (folder) await ensureFolder(vault, folder);
+  } catch {
+    await writeVaultFile(vault, safeCollisionPath(normalized), data);
+    return;
+  }
   const existing = vault.getAbstractFileByPath(normalized);
   if (existing instanceof TFile) {
     if (typeof data === "string") await vault.modify(existing, data);
     else await vault.modifyBinary(existing, data);
     return;
   }
-  if (typeof data === "string") await vault.create(normalized, data);
-  else await vault.createBinary(normalized, data);
+  if (existing instanceof TFolder) {
+    await writeVaultFile(vault, safeCollisionPath(normalized), data);
+    return;
+  }
+  try {
+    if (typeof data === "string") await vault.create(normalized, data);
+    else await vault.createBinary(normalized, data);
+  } catch (error) {
+    const afterCreate = vault.getAbstractFileByPath(normalized);
+    if (afterCreate instanceof TFile) {
+      if (typeof data === "string") await vault.modify(afterCreate, data);
+      else await vault.modifyBinary(afterCreate, data);
+      return;
+    }
+    if (/already exists/i.test(error instanceof Error ? error.message : String(error))) {
+      await writeVaultFile(vault, safeCollisionPath(normalized), data);
+      return;
+    }
+    throw error;
+  }
 }
 
 export function conflictPath(path: string, source: string): string {
@@ -120,6 +149,17 @@ export function conflictPath(path: string, source: string): string {
 
 export function deletedCopyPath(path: string): string {
   return conflictPath(path, "deleted");
+}
+
+export function safeCollisionPath(path: string): string {
+  const date = new Date();
+  const stamp = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}-${String(date.getHours()).padStart(2, "0")}-${String(date.getMinutes()).padStart(2, "0")}-${String(date.getSeconds()).padStart(2, "0")}`;
+  const encoded = normalizeVaultPath(path)
+    .split("/")
+    .filter(Boolean)
+    .map((part) => encodeURIComponent(part).replace(/\./g, "%2E"))
+    .join("/");
+  return `.sync/conflicts/${stamp}/${encoded || "file"}`;
 }
 
 export function sleep(ms: number): Promise<void> {

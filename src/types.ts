@@ -70,6 +70,56 @@ export type SyncIndexEntry = {
   deleted?: boolean;
 };
 
+export type SyncRecord = {
+  path: string;
+  fileId?: string;
+  lastKnownRemoteHash: string | null;
+  lastKnownLocalHash: string | null;
+  lastSyncTime: number;
+  lastRemoteModified: number | null;
+  lastLocalModified: number | null;
+  deleted: boolean;
+  deviceId: string;
+};
+
+export type LocalSyncManifest = {
+  version: 1;
+  deviceId: string;
+  updatedAt: number;
+  records: Record<string, SyncRecord>;
+};
+
+export type SyncQueueItem = {
+  id: string;
+  type: "upload" | "delete" | "rename";
+  path: string;
+  createdAt: number;
+  deviceId: string;
+  targetPath?: string;
+};
+
+export type LocalFile = LocalFileMeta & {
+  content: string | ArrayBuffer;
+};
+
+export type RemoteMetadata = {
+  path: string;
+  fileId?: string;
+  hash: string | null;
+  size?: number;
+  modifiedTime: number | null;
+  revision?: string;
+  deleted: boolean;
+  deviceId?: string;
+};
+
+export type RemoteChange = RemoteMetadata;
+
+export type RemoteFile = RemoteMetadata & {
+  content: string | ArrayBuffer;
+  isText: boolean;
+};
+
 export type RemoteManifest = {
   version: 1;
   vaultId: string;
@@ -148,11 +198,15 @@ export type RemoteFileMeta = {
   deleted: boolean;
   updatedAt: number;
   deletedAt?: number;
+  deviceId?: string;
+  deviceName?: string;
 };
 
 export type PluginData = {
   auth?: StoredAuth;
   index?: Record<string, SyncIndexEntry>;
+  localManifest?: LocalSyncManifest;
+  offlineQueue?: SyncQueueItem[];
   vaultId?: string;
   deviceId?: string;
   appliedCommandIds?: string[];
@@ -182,10 +236,32 @@ export type RemoteState = {
   manifest: RemoteManifest;
 };
 
+export type RemoteCleanupCandidate = {
+  id: string;
+  path: string;
+  name: string;
+  modifiedTime: number | null;
+  size?: number;
+  reason: "duplicate" | "orphan";
+  keptFileId?: string;
+};
+
 export type PlannedDeletion = {
   path: string;
   direction: "local" | "remote";
 };
+
+export type ManualConflictDetails = {
+  path: string;
+  localText: string;
+  remoteText: string;
+  deviceName: string;
+  modifiedAt: number | null;
+  changeCount: number;
+};
+
+export type ManualConflictChoice = "keep-local" | "keep-remote" | "keep-both" | "cancel";
+export type RemoteDeleteConflictChoice = "keep-local" | "delete-local" | "cancel";
 
 export function defaultIgnoredPaths(configDir: string): string {
   const normalizedConfigDir = configDir.replace(/\/+$/, "");
@@ -194,6 +270,7 @@ export function defaultIgnoredPaths(configDir: string): string {
     `${normalizedConfigDir}/workspace.json`,
     `${normalizedConfigDir}/workspace-mobile.json`,
     `${normalizedConfigDir}/cache/`,
+    ".sync/",
     ".trash/"
   ].join("\n");
 }

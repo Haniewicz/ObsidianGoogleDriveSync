@@ -388,6 +388,11 @@ export class GoogleDriveSyncSettingTab extends PluginSettingTab {
         await this.plugin.saveSettings();
       }));
 
+    new Setting(contentEl)
+      .setName("Hidden Google Drive duplicates")
+      .setDesc("Find remote files in the sync folder that are not referenced by the manifest and can be moved to Google Drive trash.")
+      .addButton((button) => button.setButtonText("Scan").onClick(() => this.plugin.cleanRemoteDuplicates()));
+
     this.renderDiagnostics(contentEl);
     new Setting(contentEl)
       .addButton((button) => button.setButtonText("Close").onClick(() => modal.close()));

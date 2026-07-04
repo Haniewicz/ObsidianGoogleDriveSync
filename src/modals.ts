@@ -1,7 +1,7 @@
 import { App, Modal, Notice, Setting, TFile } from "obsidian";
 import { DeviceFlowSession } from "./auth";
 import { AuthTransferPayload, buildTransferUrl, decryptAuth, encryptAuth, generateQRCodeDataUrl } from "./authTransfer";
-import { BackupData, BackupMeta, InitialSyncDirection, PlannedDeletion, StoredAuth } from "./types";
+import { BackupData, BackupMeta, InitialSyncDirection, ManualConflictChoice, ManualConflictDetails, PlannedDeletion, RemoteCleanupCandidate, RemoteDeleteConflictChoice, StoredAuth } from "./types";
 
 export class DeviceFlowModal extends Modal {
   private timerId?: number;
@@ -231,8 +231,131 @@ export function chooseLocalFilesToKeep(app: App, paths: string[]): Promise<strin
   });
 }
 
+export function chooseRemoteCleanupCandidates(app: App, candidates: RemoteCleanupCandidate[]): Promise<RemoteCleanupCandidate[] | null> {
+  return new Promise((resolve) => {
+    const modal = new Modal(app);
+    const selected = new Set(candidates.map((candidate) => candidate.id));
+    let settled = false;
+    const finish = (value: RemoteCleanupCandidate[] | null, close = true) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+      if (close) modal.close();
+    };
+    modal.titleEl.setText("Clean Google Drive duplicates?");
+    modal.contentEl.createEl("p", {
+      text: "These remote files are not referenced by the sync manifest, so Obsidian will not show them. Selected files will be moved to Google Drive trash."
+    });
+    const search = modal.contentEl.createEl("input", { type: "search", placeholder: "Search files" });
+    search.addClass("obsidian-google-sync-search");
+    const list = modal.contentEl.createDiv("google-drive-sync-deletion-list");
+    const render = () => {
+      list.empty();
+      const query = search.value.toLowerCase();
+      for (const candidate of candidates.filter((item) => item.path.toLowerCase().includes(query))) {
+        const desc = [
+          candidate.reason === "duplicate" ? "Duplicate of manifest file" : "Not in manifest",
+          candidate.modifiedTime ? `modified ${new Date(candidate.modifiedTime).toLocaleString()}` : undefined,
+          candidate.size !== undefined ? `${candidate.size} bytes` : undefined
+        ].filter(Boolean).join("; ");
+        new Setting(list)
+          .setName(candidate.path)
+          .setDesc(desc)
+          .addToggle((toggle) => toggle.setValue(selected.has(candidate.id)).onChange((value) => {
+            if (value) selected.add(candidate.id);
+            else selected.delete(candidate.id);
+          }));
+      }
+    };
+    search.addEventListener("input", render);
+    render();
+    new Setting(modal.contentEl)
+      .addButton((button) => button.setButtonText("Move selected to trash").setWarning().onClick(() => {
+        finish(candidates.filter((candidate) => selected.has(candidate.id)));
+      }))
+      .addButton((button) => button.setButtonText("Cancel").onClick(() => finish(null)));
+    modal.onClose = () => {
+      finish(null, false);
+      modal.contentEl.empty();
+    };
+    modal.open();
+  });
+}
+
 export function showConflictNotice(count: number) {
   if (count > 0) new Notice(`${count} Google Drive sync conflict${count === 1 ? "" : "s"} saved as copies.`);
+}
+
+export function showManualConflictModal(app: App, details: ManualConflictDetails): Promise<ManualConflictChoice> {
+  return new Promise((resolve) => {
+    const modal = new Modal(app);
+    let settled = false;
+    const finish = (value: ManualConflictChoice, close = true) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+      if (close) modal.close();
+    };
+    modal.titleEl.setText("Google Drive sync conflict");
+    modal.contentEl.createEl("p", { text: details.path, cls: "obsidian-google-sync-status-row" });
+    modal.contentEl.createEl("p", {
+      text: `Remote device: ${details.deviceName}; modified: ${details.modifiedAt ? new Date(details.modifiedAt).toLocaleString() : "unknown"}; changes: ${details.changeCount}`,
+      cls: "obsidian-google-sync-status-row"
+    });
+
+    const diffEl = modal.contentEl.createDiv("obsidian-google-sync-diff");
+    diffEl.addClass("obsidian-google-sync-hidden");
+    let diffRendered = false;
+
+    const actions = new Setting(modal.contentEl)
+      .addButton((button) => button.setButtonText("Keep Local").setCta().onClick(() => finish("keep-local")))
+      .addButton((button) => button.setButtonText("Keep Remote").setWarning().onClick(() => finish("keep-remote")))
+      .addButton((button) => button.setButtonText("Keep Both").onClick(() => finish("keep-both")))
+      .addButton((button) => button.setButtonText("Show Diff").onClick(() => {
+        const visible = !diffEl.hasClass("obsidian-google-sync-hidden");
+        if (!visible && !diffRendered) {
+          diffRendered = true;
+          renderDiff(diffEl, details.remoteText, details.localText, true);
+        }
+        diffEl.toggleClass("obsidian-google-sync-hidden", visible);
+        button.setButtonText(visible ? "Show Diff" : "Hide Diff");
+      }))
+      .addButton((button) => button.setButtonText("Cancel").onClick(() => finish("cancel")));
+    actions.settingEl.addClass("obsidian-google-sync-conflict-actions");
+    modal.onClose = () => {
+      finish("cancel", false);
+      modal.contentEl.empty();
+    };
+    modal.open();
+  });
+}
+
+export function showRemoteDeleteConflictModal(app: App, path: string, deviceName: string, deletedAt: number | null): Promise<RemoteDeleteConflictChoice> {
+  return new Promise((resolve) => {
+    const modal = new Modal(app);
+    let settled = false;
+    const finish = (value: RemoteDeleteConflictChoice, close = true) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+      if (close) modal.close();
+    };
+    modal.titleEl.setText("Google Drive delete conflict");
+    modal.contentEl.createEl("p", { text: path, cls: "obsidian-google-sync-status-row" });
+    modal.contentEl.createEl("p", {
+      text: `This file was deleted on ${deviceName}, but this device has local changes. Deleted: ${deletedAt ? new Date(deletedAt).toLocaleString() : "unknown"}.`
+    });
+    const actions = new Setting(modal.contentEl)
+      .addButton((button) => button.setButtonText("Keep Local").setCta().onClick(() => finish("keep-local")))
+      .addButton((button) => button.setButtonText("Delete Local").setWarning().onClick(() => finish("delete-local")))
+      .addButton((button) => button.setButtonText("Cancel").onClick(() => finish("cancel")));
+    actions.settingEl.addClass("obsidian-google-sync-conflict-actions");
+    modal.onClose = () => {
+      finish("cancel", false);
+      modal.contentEl.empty();
+    };
+    modal.open();
+  });
 }
 
 function key(deletion: PlannedDeletion): string {

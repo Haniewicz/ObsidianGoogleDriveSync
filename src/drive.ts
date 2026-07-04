@@ -25,6 +25,17 @@ type DriveFile = {
 
 type DriveList = {
   files?: DriveFile[];
+  nextPageToken?: string;
+};
+
+export type DriveVaultFile = {
+  id: string;
+  path: string;
+  name: string;
+  mimeType?: string;
+  modifiedTime?: string;
+  size?: string;
+  headRevisionId?: string;
 };
 
 export class GoogleDriveClient {
@@ -229,6 +240,32 @@ export class GoogleDriveClient {
     return this.createFile(name, parentId, content, mimeType);
   }
 
+  async listVaultFiles(filesFolderId: string): Promise<DriveVaultFile[]> {
+    const files: DriveVaultFile[] = [];
+    await this.collectVaultFiles(filesFolderId, "", files);
+    return files;
+  }
+
+  async renameVaultFile(fileId: string, newPath: string, filesFolderId: string): Promise<DriveFile> {
+    const parentId = await this.ensureFolderPath(newPath.split("/").slice(0, -1), filesFolderId);
+    const name = newPath.split("/").pop() || newPath;
+    const current = await this.requestJson<DriveFile>(
+      `${DRIVE_API}/files/${encodeURIComponent(fileId)}?fields=id,name,parents`,
+      "GET"
+    );
+    const removeParents = (current.parents ?? []).filter((id) => id !== parentId).join(",");
+    const query = encodeQuery({
+      fields: "id,name,modifiedTime,size,headRevisionId,parents",
+      addParents: parentId,
+      removeParents: removeParents || undefined
+    });
+    return this.requestJson<DriveFile>(
+      `${DRIVE_API}/files/${encodeURIComponent(fileId)}?${query}`,
+      "PATCH",
+      { name }
+    );
+  }
+
   async trashFile(fileId: string): Promise<void> {
     await this.requestJson(`${DRIVE_API}/files/${encodeURIComponent(fileId)}?fields=id,trashed`, "PATCH", { trashed: true });
   }
@@ -261,6 +298,42 @@ export class GoogleDriveClient {
     });
     const result = await this.requestJson<DriveList>(`${DRIVE_API}/files?${query}`, "GET");
     return result.files?.[0];
+  }
+
+  private async collectVaultFiles(parentId: string, parentPath: string, output: DriveVaultFile[]): Promise<void> {
+    for (const child of await this.listChildren(parentId)) {
+      const path = parentPath ? `${parentPath}/${child.name}` : child.name;
+      if (child.mimeType === FOLDER_MIME) {
+        await this.collectVaultFiles(child.id, path, output);
+      } else {
+        output.push({
+          id: child.id,
+          path,
+          name: child.name,
+          mimeType: child.mimeType,
+          modifiedTime: child.modifiedTime,
+          size: child.size,
+          headRevisionId: child.headRevisionId
+        });
+      }
+    }
+  }
+
+  private async listChildren(parentId: string): Promise<DriveFile[]> {
+    const files: DriveFile[] = [];
+    let pageToken: string | undefined;
+    do {
+      const query = encodeQuery({
+        q: `'${escapeDriveQuery(parentId)}' in parents and trashed = false`,
+        fields: "nextPageToken,files(id,name,mimeType,modifiedTime,size,headRevisionId)",
+        pageSize: 1000,
+        pageToken
+      });
+      const result = await this.requestJson<DriveList>(`${DRIVE_API}/files?${query}`, "GET");
+      files.push(...(result.files ?? []));
+      pageToken = result.nextPageToken;
+    } while (pageToken);
+    return files;
   }
 
   private async downloadJson<T>(fileId: string): Promise<T> {
