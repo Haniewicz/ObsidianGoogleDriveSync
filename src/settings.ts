@@ -136,6 +136,17 @@ export class GoogleDriveSyncSettingTab extends PluginSettingTab {
         }));
 
     new Setting(contentEl)
+      .setName("Google Drive folder")
+      .setDesc("Folder used for this vault sync data.")
+      .addText((text) => text
+        .setPlaceholder("ObsidianGoogleDriveSync")
+        .setValue(this.plugin.settings.remoteFolderName)
+        .onChange(async (value) => {
+          this.plugin.settings.remoteFolderName = value.trim() || "ObsidianGoogleDriveSync";
+          await this.plugin.saveSettings();
+        }));
+
+    new Setting(contentEl)
       .setName("Connected status")
       .setDesc(connected ? this.plugin.accountLabel || "Connected" : "Not connected");
 

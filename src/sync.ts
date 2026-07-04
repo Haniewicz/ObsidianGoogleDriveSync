@@ -5,7 +5,7 @@ import { MergeEngine } from "./merge";
 import { OfflineSyncQueue } from "./offlineQueue";
 import { GoogleDriveProvider } from "./provider";
 import { LocalVaultScanner } from "./scanner";
-import { BackupFileSource, BackupMode, ConflictPolicy, LocalFile, LocalFileMeta, LocalSyncManifest, PlannedDeletion, RemoteFile, RemoteFileMeta, RemoteManifest, RemoteSyncCommand, SyncIndexEntry, SyncQueueItem, SyncSummary } from "./types";
+import { BackupFileSource, BackupMode, ConflictPolicy, LargeDeletionAction, LargeDeletionDecision, LargeDeletionReviewResult, LocalFile, LocalFileMeta, LocalSyncManifest, PlannedDeletion, RemoteFile, RemoteFileMeta, RemoteManifest, RemoteSyncCommand, SyncIndexEntry, SyncQueueItem, SyncSummary } from "./types";
 import { byteSize, conflictPath, deletedCopyPath, getExtension, isLikelyText, sha256Hex, unique, writeVaultFile } from "./utils";
 import { LargeDeletionModal, showConflictNotice, showManualConflictModal, showRemoteDeleteConflictModal } from "./modals";
 
@@ -90,12 +90,12 @@ export class SyncEngine {
       await this.log("sync-engine-paths-planned", { pathCount: paths.length });
       const deletionPlan = this.planDeletions(paths, local, state.manifest, index, localManifest);
       if (deletionPlan.length > 0) await this.log("sync-engine-deletion-plan", { count: deletionPlan.length });
-      const allowedDeletions = await this.reviewLargeDeletionPlan(deletionPlan, Object.keys(index).length);
-      if (allowedDeletions === null) {
+      const deletionReview = await this.reviewLargeDeletionPlan(deletionPlan, Object.keys(index).length);
+      if (deletionReview === null) {
         new Notice("Google Drive sync cancelled.");
         return;
       }
-      const allowedDeletionKeys = new Set(allowedDeletions.map((item) => `${item.direction}:${item.path}`));
+      const deletionDecisions = new Map(deletionReview.decisions.map((item) => [this.deletionKey(item), item.action]));
 
       for (const path of paths) {
         const localMeta = local[path];
@@ -162,19 +162,27 @@ export class SyncEngine {
         }
 
         if (localMeta && remoteMeta?.deleted && localMeta.hash === baseHash) {
-          if (allowedDeletionKeys.has(`local:${path}`)) {
+          const deletionAction = deletionDecisions.get(`local:${path}`);
+          if (deletionAction === "delete" || deletionAction === "keep-remote") {
             deletedPaths.push(path);
             await this.captureLocalBackup(safetyBackupFiles, path, localMeta);
             await this.safeLocalDelete(path, index, counters, localManifest);
+          } else if (deletionAction === "keep-local" || deletionAction === "keep-both") {
+            changedPaths.push(path);
+            await this.uploadLocal(path, localMeta, state.filesFolderId, state.manifest, index, counters, localManifest);
           }
           continue;
         }
 
         if (!localMeta && remoteMeta && !remoteMeta.deleted && remoteMeta.hash === baseHash) {
-          if (allowedDeletionKeys.has(`remote:${path}`)) {
+          const deletionAction = deletionDecisions.get(`remote:${path}`);
+          if (deletionAction === "delete" || deletionAction === "keep-local") {
             deletedPaths.push(path);
             await this.captureRemoteBackup(safetyBackupFiles, path, remoteMeta);
             await this.tombstoneRemote(path, state.manifest, index, counters, localManifest);
+          } else if (deletionAction === "keep-remote" || deletionAction === "keep-both") {
+            changedPaths.push(path);
+            await this.downloadRemote(path, remoteMeta, index, counters, localManifest);
           }
           continue;
         }
@@ -546,14 +554,22 @@ export class SyncEngine {
     return plan;
   }
 
-  private async reviewLargeDeletionPlan(plan: PlannedDeletion[], knownSyncedCount: number): Promise<PlannedDeletion[] | null> {
-    if (plan.length === 0) return [];
-    if (plan.length <= 5) return plan;
+  private async reviewLargeDeletionPlan(plan: PlannedDeletion[], knownSyncedCount: number): Promise<LargeDeletionReviewResult | null> {
+    if (plan.length === 0) return { decisions: [] };
+    if (plan.length <= 5) return { decisions: plan.map((item) => this.deletionDecision(item, "delete")) };
     const percent = knownSyncedCount === 0 ? 0 : (plan.length / knownSyncedCount) * 100;
-    if (percent <= this.options.getMaxDeletionPercent()) return plan;
+    if (percent <= this.options.getMaxDeletionPercent()) return { decisions: plan.map((item) => this.deletionDecision(item, "delete")) };
     return new Promise((resolve) => {
       new LargeDeletionModal(this.options.app, plan, percent, resolve).open();
     });
+  }
+
+  private deletionDecision(deletion: PlannedDeletion, action: LargeDeletionAction): LargeDeletionDecision {
+    return { ...deletion, action };
+  }
+
+  private deletionKey(deletion: PlannedDeletion): string {
+    return `${deletion.direction}:${deletion.path}`;
   }
 
   private async applyLocalRenames(
