@@ -1,6 +1,6 @@
 {
   "name": "google-drive-vault-sync",
-  "version": "0.1.21",
+  "version": "0.1.22-dev.0",
   "description": "Two-way Google Drive sync for vaults.",
   "main": "main.js",
   "scripts": {
