@@ -171,7 +171,7 @@ export default class GoogleDriveSyncPlugin extends Plugin {
       vaultId: loaded?.vaultId,
       deviceId: loaded?.deviceId,
       appliedCommandIds: loaded?.appliedCommandIds ?? [],
-      initialSyncCompleted: loaded?.initialSyncCompleted ?? (loaded?.auth ? hasPreviousSync : false),
+      initialSyncCompleted: loaded?.initialSyncCompleted ?? (loaded?.auth ? true : false),
       syncStatus: loaded?.syncStatus ?? { state: loaded?.auth ? "idle" : "disconnected" },
       lastRemoteUpdatedAt: loaded?.lastRemoteUpdatedAt,
       lastRemoteCommandId: loaded?.lastRemoteCommandId
